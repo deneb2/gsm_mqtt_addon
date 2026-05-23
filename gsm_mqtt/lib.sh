@@ -21,7 +21,7 @@ emit_event() {
 dedup_seen() {
     local state_file="$1"
     local key="$2"
-    grep -qF -- "$key" "$state_file" 2>/dev/null
+    grep -qFx -- "$key" "$state_file" 2>/dev/null
 }
 
 dedup_mark() {

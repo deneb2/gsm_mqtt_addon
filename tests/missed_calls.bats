@@ -55,6 +55,18 @@ Call 2, Outgoing, Number "+392222222222", Date/time: 21.10.2025 15:01:00'
     [ "$(gammu_call_count deleteallcalls)" -eq 0 ]
 }
 
+@test "dedup matches whole line, not substring" {
+    # Regression: dedup_seen used `grep -qF` (substring), so any stored line
+    # that contained the lookup key anywhere would falsely suppress a new
+    # event. Seed the state file with a line that embeds the new key as a
+    # substring and assert the event still publishes.
+    echo 'noise_+393755403326_21.10.2025_15:02:00_suffix' > "$PROCESSED_CALLS"
+    stub_gammu_calllog 'Call 1, Missed, Number "+393755403326", Date/time: 21.10.2025 15:02:00'
+    stub_mosquitto_pub
+    check_missed_calls
+    [ "$(publish_count 'Missed call from: +393755403326')" -eq 1 ]
+}
+
 @test "gammu failure is tolerated (no crash, no publish)" {
     cat > "$STUB_DIR/gammu" <<'EOF'
 #!/usr/bin/env bash
