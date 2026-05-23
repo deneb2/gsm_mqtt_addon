@@ -26,7 +26,7 @@ The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps t
 **State files survive only inside the container's tmpfs:**
 - `/tmp/sms_queue` — line-per-SMS JSON, FIFO, drained by `sed -i '1d'`.
 - `/tmp/processed_calls` — dedup key is `${number}_${call_datetime}` parsed from gammu output. Trimmed to last 200 entries. We do NOT clear the modem's call log — that would race with incoming calls and silently drop them.
-- `/tmp/processed_sms` — same shape, keyed by `${location}_${datetime}` for inbound SMS (when enabled).
+- `/tmp/processed_sms` — same shape, keyed by `${location}_${datetime}` for inbound SMS.
 - `/tmp/gammurc` — regenerated on every start from `serial_port` config.
 
 **MQTT topic shape** (base = `mqtt_topic` config, default `home/gsm_mqtt`):

@@ -1,7 +1,7 @@
 # GSM MQTT Bridge
 
-This Home Assistant add-on bridges a GSM/cellular modem to MQTT: it publishes missed-call notifications and accepts SMS-sending commands.
-The add-on is designed to integrate modem functionality (missed call detection, SMS sending) with Home Assistant.
+This Home Assistant add-on bridges a GSM/cellular modem to MQTT: it publishes missed-call notifications and inbound SMS, and accepts SMS-sending commands.
+The add-on is designed to integrate modem functionality (missed call detection, SMS sending and receiving) with Home Assistant.
 
 ## Features
 
@@ -377,6 +377,13 @@ If you see "Function not supported" for call logs:
 1. Your modem may not support this feature
 2. Consider using a different modem model
 3. Or contact maintainer for alternative implementation
+
+### SMS Not Receiving
+
+1. Check the add-on logs for "Could not read SMS" messages
+2. Test inbox access manually: `gammu -c /tmp/gammurc getallsms` — should list inbound messages, not "Function not supported"
+3. If messages arrive but the add-on never publishes them, dump one and compare its format to the fixtures in `tests/parse_sms.bats` — the parser is locked to gammu's English-locale shape
+4. If messages accumulate on the SIM/modem instead of being deleted after publish, run `gammu -c /tmp/gammurc getsmsfolders` and confirm folder 1 is SIM memory. The add-on deletes from memory `1`; if your modem stores inbound SMS elsewhere (often `2` = ME), the delete silently fails and dedup catches the re-publish
 
 ## Running Tests
 
