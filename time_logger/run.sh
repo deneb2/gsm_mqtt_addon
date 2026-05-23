@@ -21,9 +21,10 @@ export MQTT_HOST MQTT_PORT MQTT_USER MQTT_PASS MQTT_TOPIC SERIAL_PORT
 # State files
 SMS_QUEUE="/tmp/sms_queue"
 PROCESSED_CALLS="/tmp/processed_calls"
+PROCESSED_SMS="/tmp/processed_sms"
 GAMMU_CONFIG="/tmp/gammurc"
-export SMS_QUEUE PROCESSED_CALLS GAMMU_CONFIG
-touch "$SMS_QUEUE" "$PROCESSED_CALLS"
+export SMS_QUEUE PROCESSED_CALLS PROCESSED_SMS GAMMU_CONFIG
+touch "$SMS_QUEUE" "$PROCESSED_CALLS" "$PROCESSED_SMS"
 
 cat > "$GAMMU_CONFIG" << EOF
 [gammu]
@@ -73,6 +74,9 @@ while true; do
     # Priority 2: Check for missed calls
     bashio::log.debug "Checking for missed calls"
     check_missed_calls
+
+    # Priority 3: Check for received SMS (stub — parsers in lib.sh are TODO)
+    # check_received_sms
 
     sleep 10
 done

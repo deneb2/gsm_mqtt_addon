@@ -5,6 +5,7 @@
 
 : "${SMS_QUEUE:=/tmp/sms_queue}"
 : "${PROCESSED_CALLS:=/tmp/processed_calls}"
+: "${PROCESSED_SMS:=/tmp/processed_sms}"
 : "${GAMMU_CONFIG:=/tmp/gammurc}"
 : "${DEDUP_TRIM:=200}"
 : "${POST_SMS_COOLDOWN:=3}"
@@ -103,13 +104,49 @@ check_missed_calls() {
     return 0
 }
 
-check_received_sms() {
-    # Future implementation:
-    # local sms_list
-    # sms_list=$(gammu -c "$GAMMU_CONFIG" getallsms 2>&1)
-    #
-    # Parse SMS, publish to MQTT, delete from SIM
-    # gammu -c "$GAMMU_CONFIG" deletesms 1 <location>
+# Placeholder for inbound SMS handling. Wired into the main loop and into
+# tests/sms_receive.bats; the modem-specific parsers below are TODO stubs.
+# Drop in real implementations of parse_sms_dump and parse_sms_entry to enable.
+parse_sms_dump() {
+    # TODO: split `gammu getallsms` output into one record per SMS, one per line.
+    # Echo each record verbatim (escaped as needed) so the caller's `while read`
+    # can hand it to parse_sms_entry.
+    return 0
+}
 
+parse_sms_entry() {
+    # TODO: given one SMS record, echo "location|sender|datetime|body_base64".
+    # Return 1 if the record cannot be parsed (skipped by the caller).
+    return 1
+}
+
+check_received_sms() {
+    local sms_dump exit_code
+    sms_dump=$(LC_ALL=C gammu -c "$GAMMU_CONFIG" getallsms 2>&1)
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        bashio::log.debug "Could not read SMS (modem may not support it): $sms_dump"
+        return 1
+    fi
+
+    local entry parsed location sender datetime body_b64 body key payload
+    while IFS= read -r entry; do
+        parsed=$(parse_sms_entry "$entry") || continue
+        IFS='|' read -r location sender datetime body_b64 <<<"$parsed"
+        key="${location}_${datetime}"
+        if dedup_seen "$PROCESSED_SMS" "$key"; then
+            continue
+        fi
+        body=$(echo "$body_b64" | base64 -d 2>/dev/null)
+        payload=$(jq -n \
+            --arg from "$sender" \
+            --arg ts "$datetime" \
+            --arg body "$body" \
+            '{from:$from,timestamp:$ts,body:$body}')
+        bashio::log.info "Received SMS from: $sender"
+        emit_event "/sms_received" "$payload"
+        dedup_mark "$PROCESSED_SMS" "$key"
+        LC_ALL=C gammu -c "$GAMMU_CONFIG" deletesms 1 "$location" >/dev/null 2>&1 || true
+    done < <(parse_sms_dump "$sms_dump")
     return 0
 }
