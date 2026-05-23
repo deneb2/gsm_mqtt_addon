@@ -75,8 +75,8 @@ while true; do
     bashio::log.debug "Checking for missed calls"
     check_missed_calls
 
-    # Priority 3: Check for received SMS (stub — parsers in lib.sh are TODO)
-    # check_received_sms
+    # Priority 3: Check for received SMS
+    check_received_sms
 
     sleep 10
 done

@@ -7,10 +7,10 @@ The add-on is designed to integrate modem functionality (missed call detection, 
 
 - **Modem Event Monitoring**: Detects missed calls from connected GSM modem and publishes to MQTT
 - **SMS Sending**: Send SMS messages via MQTT commands from Home Assistant automations
+- **SMS Receiving**: Publishes inbound SMS to MQTT with sender, ISO 8601 timestamp, and body; deletes from SIM after publish
 - **Status Feedback**: Publishes SMS delivery status back to MQTT
 - **Unified Gammu Architecture**: Single tool for all modem operations - no serial port conflicts
-- **Call Deduplication**: Tracks processed calls to avoid duplicate notifications
-- **Extensible**: Foundation ready for SMS receiving (future feature)
+- **Deduplication**: Tracks processed calls and SMS to avoid duplicate notifications
 - Easy to configure through the Home Assistant GUI
 
 ## Installation Instructions
@@ -49,8 +49,9 @@ The add-on uses the following MQTT topics (assuming `mqtt_topic` is set to `home
   - `home/gsm_mqtt/send_sms` - Send SMS commands to the modem
 
 - **Publish Topics** (add-on publishes to these):
-  - `home/gsm_mqtt` - Modem events (missed calls, etc.)
-  - `home/gsm_mqtt/sms_status` - SMS delivery status feedback
+  - `home/gsm_mqtt` - Modem events (missed calls, plain text payload)
+  - `home/gsm_mqtt/sms_status` - SMS delivery status feedback (JSON: `{number, status, timestamp[, error]}`)
+  - `home/gsm_mqtt/sms_received` - Inbound SMS (JSON: `{from, timestamp, body}`, timestamp is ISO 8601 with TZ offset)
 
 ## Sending SMS from Home Assistant
 
@@ -323,6 +324,27 @@ actions:
 mode: queued
 ```
 
+### Example 7: Notify on Inbound SMS
+
+Get a Home Assistant notification whenever the modem receives a new SMS:
+
+```yaml
+alias: "Notify on Inbound SMS"
+description: "Notification when the modem receives an SMS"
+triggers:
+  - trigger: mqtt
+    topic: home/gsm_mqtt/sms_received
+conditions: []
+actions:
+  - action: notify.notify
+    data:
+      title: "SMS from {{ trigger.payload_json.from }}"
+      message: "{{ trigger.payload_json.body }}"
+mode: queued
+```
+
+The `timestamp` field is ISO 8601 with timezone offset (e.g. `2025-10-21T15:02:00+0200`), so it works directly with Home Assistant's `as_datetime` / `as_timestamp` helpers if you want to compare against `now()`.
+
 ## Troubleshooting
 
 ### SMS Not Sending
@@ -372,7 +394,7 @@ git clone https://github.com/bats-core/bats-core.git /tmp/bats-core
 bats tests/
 ```
 
-The suite covers missed-call dedup, SMS sending, and SMS-receive plumbing. When implementing the `parse_sms_dump` / `parse_sms_entry` stubs in `lib.sh`, add a `tests/parse_sms.bats` with real `gammu getallsms` output samples.
+The suite covers missed-call dedup, SMS sending, SMS-receive plumbing (with fake parsers), the real `parse_sms_dump` / `parse_sms_entry` against realistic `gammu getallsms` fixtures (`tests/parse_sms.bats`), and an end-to-end receive path through `check_received_sms`.
 
 ## Technical Details
 
@@ -384,4 +406,4 @@ The suite covers missed-call dedup, SMS sending, and SMS-receive plumbing. When 
 - **Deduplication**: Tracks processed calls in `/tmp/processed_calls` keyed by `number_datetime` so re-reads of the same entry are suppressed and distinct calls within an hour are both reported. The modem's own FIFO rotation keeps its call log bounded.
 - **SMS Format**: JSON payload with `number` and `message` fields
 - **Status Feedback**: Publishes success/failure status to MQTT after each SMS attempt
-- **Extensible**: Ready for SMS receiving implementation (just uncomment function)
+- **SMS Receiving**: Polls `gammu getallsms` each cycle; published SMS are deleted from SIM memory. Dedup state lives in `/tmp/processed_sms` keyed by `location_datetime`.

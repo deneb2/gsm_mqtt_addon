@@ -17,7 +17,7 @@ The HA-facing name is "GSM MQTT Bridge"; the slug is `gsm_mqtt`. The repo was or
 **Polling loop with strict priority** (in `run.sh`):
 1. Drain one SMS from `/tmp/sms_queue` if present (then `sleep "$POST_SMS_COOLDOWN"`, continue — keeps outbound SMS responsive while giving the modem time to recover).
 2. Otherwise `gammu getcalllog` and publish any new missed calls.
-3. `check_received_sms` is wired into `lib.sh` but its parsers (`parse_sms_dump`, `parse_sms_entry`) are TODO stubs; the call is commented out in `run.sh` until they're implemented.
+3. `check_received_sms` runs `gammu getallsms`, parses each record via `parse_sms_dump` (splits into base64-encoded blocks, one per SMS) and `parse_sms_entry` (extracts `location|sender|datetime|body_b64` with the datetime ISO-normalized), publishes to `<base>/sms_received`, dedups in `/tmp/processed_sms`, and deletes the SMS from SIM memory.
 
 The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps the loop alive across USB reconnects.
 
@@ -31,7 +31,7 @@ The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps t
 
 **MQTT topic shape** (base = `mqtt_topic` config, default `home/gsm_mqtt`):
 - Subscribe: `<base>/send_sms` — payload must be `{"number":"...","message":"..."}` (validated with `jq -e '.number and .message'`).
-- Publish: `<base>` (missed-call notifications, plain text), `<base>/sms_status` (JSON with `status`: `sent`/`failed`), and `<base>/sms_received` (JSON with `from`/`timestamp`/`body`, only once the SMS-receive parsers are implemented).
+- Publish: `<base>` (missed-call notifications, plain text), `<base>/sms_status` (JSON with `status`: `sent`/`failed`), and `<base>/sms_received` (JSON with `from`/`timestamp`/`body`). `timestamp` is ISO 8601 with timezone offset, parsed from gammu's English-locale `Sent` field.
 
 ## Config and permissions
 
