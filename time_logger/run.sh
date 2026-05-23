@@ -65,8 +65,8 @@ while true; do
 
     # Priority 1: Drain one SMS from the outbound queue
     if send_queued_sms; then
-        bashio::log.info "SMS sent, waiting before next cycle"
-        sleep 1
+        bashio::log.info "SMS sent, waiting ${POST_SMS_COOLDOWN}s before next cycle"
+        sleep "$POST_SMS_COOLDOWN"
         continue
     fi
 

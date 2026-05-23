@@ -7,6 +7,7 @@
 : "${PROCESSED_CALLS:=/tmp/processed_calls}"
 : "${GAMMU_CONFIG:=/tmp/gammurc}"
 : "${DEDUP_TRIM:=200}"
+: "${POST_SMS_COOLDOWN:=3}"
 
 emit_event() {
     local topic_suffix="$1"
