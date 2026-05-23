@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A Home Assistant add-on (not a standalone app). The whole add-on is one shell script — `time_logger/run.sh` — packaged in a hassio-addons base image. Home Assistant runs the container; there is no local build/test/lint pipeline. To ship a change, bump `version` in `time_logger/config.yaml` and commit; users pull via the add-on store using `repository.yaml`.
+A Home Assistant add-on (not a standalone app). Two shell scripts — `time_logger/run.sh` (driver) and `time_logger/lib.sh` (logic) — packaged in a hassio-addons base image. Home Assistant runs the container. There is no in-container build/lint pipeline, but a bats test suite under `tests/` runs on the host against `lib.sh` with `gammu` and `mosquitto_pub` stubbed. To ship a change, bump `version` in `time_logger/config.yaml` and commit; users pull via the add-on store using `repository.yaml`.
 
 The user-facing name in HA is "Time Logger Add-On" but the actual function is GSM modem monitoring + SMS sending over MQTT. Don't be confused by the legacy `time_logger` slug.
 
 ## Architecture (the parts that aren't obvious from one file)
 
-**Single-tool serial access.** All modem operations go through `gammu` against a generated config at `/tmp/gammurc` (`run.sh:28-33`). This is deliberate — earlier versions mixed `gammu` with other AT-command tools and hit serial port conflicts. Do not add a second tool that opens `$SERIAL_PORT` directly; route new modem features through `gammu -c "$GAMMU_CONFIG" ...`.
+**Single-tool serial access.** All modem operations go through `gammu` against a generated config at `/tmp/gammurc` (built in `run.sh` from the `serial_port` setting). This is deliberate — earlier versions mixed `gammu` with other AT-command tools and hit serial port conflicts. Do not add a second tool that opens `$SERIAL_PORT` directly; route new modem features through `gammu -c "$GAMMU_CONFIG" ...`.
 
 **Code split:** `run.sh` is the thin driver (config, MQTT subscriber, main loop). All pure logic lives in `time_logger/lib.sh`, sourced from `/lib.sh` in the container. Tests in `tests/` source `lib.sh` directly with `gammu` and `mosquitto_pub` stubbed via PATH.
 
@@ -31,11 +31,15 @@ The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps t
 
 **MQTT topic shape** (base = `mqtt_topic` config, default `home/time_logger`):
 - Subscribe: `<base>/send_sms` — payload must be `{"number":"...","message":"..."}` (validated with `jq -e '.number and .message'`).
-- Publish: `<base>` (missed-call notifications, plain text) and `<base>/sms_status` (JSON with `status`: `sent`/`failed`).
+- Publish: `<base>` (missed-call notifications, plain text), `<base>/sms_status` (JSON with `status`: `sent`/`failed`), and `<base>/sms_received` (JSON with `from`/`timestamp`/`body`, only once the SMS-receive parsers are implemented).
 
 ## Config and permissions
 
-`time_logger/config.yaml` is the HA add-on manifest. The `options`/`schema` sections define the UI form; defaults there are also the fallback values referenced in `run.sh:12-17` (keep them in sync). `devices:` exposes `/dev/ttyUSB*`, `/dev/ttyACM*`, and `/dev/bus/usb` — needed for the modem to appear inside the container. `full_access: true` and `host_dbus: true` are currently set; tighten only if you've verified gammu still works without them.
+`time_logger/config.yaml` is the HA add-on manifest. The `options`/`schema` sections define the UI form; defaults there are also the fallback values set via `: "${VAR:=default}"` at the top of `run.sh` — keep the two in sync. `devices:` exposes `/dev/ttyUSB*`, `/dev/ttyACM*`, and `/dev/bus/usb` — needed for the modem to appear inside the container. `full_access: true` and `host_dbus: true` are currently set; tighten only if you've verified gammu still works without them.
+
+## Tests
+
+`bats tests/` runs the full suite on the host. `tests/test_helper.bash` sources `lib.sh` directly, shims `bashio::log.*`, and installs PATH-injected stubs for `gammu` and `mosquitto_pub` that record every invocation. When adding a new `check_*` function in `lib.sh`, write a matching `tests/<name>.bats` using the same stub helpers; aim for red-then-green commits so the test demonstrates the bug before the fix lands.
 
 ## Working with the modem (inside the container)
 
