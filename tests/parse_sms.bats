@@ -171,6 +171,34 @@ EOF
     [ "$(echo "$output" | wc -l)" -eq 2 ]
 }
 
+@test "parse_sms_entry rejects malformed timezone, falls back to underscore form" {
+    # The ISO-conversion regex used `[+-][0-9]+` for TZ, accepting nonsense
+    # like `+020000`. Tighten to exactly 4 digits so a malformed TZ falls
+    # through to the underscore fallback instead of being silently mangled
+    # into a fake ISO string.
+    block=$(cat <<'EOF'
+Location 7, folder "Inbox", SIM memory, Inbox folder
+SMS message
+SMSC number          : "+393359609600"
+Sent                 : Tue 21 Oct 2025 15:02:00 +020000
+Coding               : Default GSM alphabet (no compression)
+Remote number        : "+393358989011"
+Status               : UnRead
+
+Bad timezone test.
+
+EOF
+)
+    encoded=$(printf '%s' "$block" | base64 | tr -d '\n')
+    run parse_sms_entry "$encoded"
+    [ "$status" -eq 0 ]
+    IFS='|' read -r _ _ datetime _ <<<"$output"
+    # The ISO converter must NOT have run — output should be the
+    # underscore-escaped raw form, not a string starting with `2025-`.
+    [[ "$datetime" != 2025-* ]]
+    [[ "$datetime" = *_+020000 ]]
+}
+
 @test "parse_sms_entry preserves a body containing a double quote" {
     # JSON publishing path uses jq --arg so escapes are handled downstream,
     # but the parser itself must round-trip the raw bytes through base64.

@@ -185,7 +185,7 @@ parse_sms_entry() {
     done
 
     local datetime
-    if [[ "$datetime_raw" =~ ([0-9]+)[[:space:]]+([A-Za-z]+)[[:space:]]+([0-9]+)[[:space:]]+([0-9:]+)[[:space:]]+([+-][0-9]+) ]]; then
+    if [[ "$datetime_raw" =~ ([0-9]+)[[:space:]]+([A-Za-z]+)[[:space:]]+([0-9]{4})[[:space:]]+([0-9]{2}:[0-9]{2}:[0-9]{2})[[:space:]]+([+-][0-9]{4})([[:space:]]|$) ]]; then
         local day="${BASH_REMATCH[1]}" mon_name="${BASH_REMATCH[2]}"
         local year="${BASH_REMATCH[3]}" hms="${BASH_REMATCH[4]}" tz="${BASH_REMATCH[5]}"
         local mon
