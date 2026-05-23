@@ -21,7 +21,7 @@ emit_event() {
 dedup_seen() {
     local state_file="$1"
     local key="$2"
-    grep -qF -- "$key" "$state_file" 2>/dev/null
+    grep -qFx -- "$key" "$state_file" 2>/dev/null
 }
 
 dedup_mark() {
@@ -63,14 +63,23 @@ send_queued_sms() {
     exit_code=$?
     sed -i '1d' "$SMS_QUEUE"
 
+    local timestamp payload
+    timestamp=$(date -Iseconds)
     if [ $exit_code -eq 0 ]; then
         bashio::log.info "SMS sent successfully to $number"
-        emit_event "/sms_status" \
-            "{\"number\":\"$number\",\"status\":\"sent\",\"timestamp\":\"$(date -Iseconds)\"}"
+        payload=$(jq -cn \
+            --arg number "$number" \
+            --arg ts "$timestamp" \
+            '{number:$number,status:"sent",timestamp:$ts}')
+        emit_event "/sms_status" "$payload"
     else
         bashio::log.error "Failed to send SMS to $number: $result"
-        emit_event "/sms_status" \
-            "{\"number\":\"$number\",\"status\":\"failed\",\"error\":\"$result\",\"timestamp\":\"$(date -Iseconds)\"}"
+        payload=$(jq -cn \
+            --arg number "$number" \
+            --arg err "$result" \
+            --arg ts "$timestamp" \
+            '{number:$number,status:"failed",error:$err,timestamp:$ts}')
+        emit_event "/sms_status" "$payload"
     fi
     return 0
 }
