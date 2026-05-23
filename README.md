@@ -356,14 +356,32 @@ If you see "Function not supported" for call logs:
 2. Consider using a different modem model
 3. Or contact maintainer for alternative implementation
 
+## Running Tests
+
+The add-on ships with a bats test suite that exercises `lib.sh` against stubbed `gammu` and `mosquitto_pub` binaries. Tests run on the host, no container needed.
+
+```bash
+# Install bats once (Debian/Ubuntu)
+sudo apt install bats
+
+# Or vendor it locally
+git clone https://github.com/bats-core/bats-core.git /tmp/bats-core
+/tmp/bats-core/install.sh ~/.local
+
+# Run the suite
+bats tests/
+```
+
+The suite covers missed-call dedup, SMS sending, and SMS-receive plumbing. When implementing the `parse_sms_dump` / `parse_sms_entry` stubs in `lib.sh`, add a `tests/parse_sms.bats` with real `gammu getallsms` output samples.
+
 ## Technical Details
 
 - **Modem Communication**: Uses `gammu` for all modem operations (call monitoring + SMS sending)
 - **Polling Pattern**: Checks for SMS to send (~priority) then polls modem every ~10 seconds
 - **Queue System**: File-based queue at `/tmp/sms_queue` for reliable SMS handling
 - **No Conflicts**: Only Gammu accesses serial port - eliminates data consumption conflicts
-- **Call Detection**: Uses `gammu getcalllog` to check for missed calls
-- **Deduplication**: Tracks processed calls in `/tmp/processed_calls` to avoid duplicates
+- **Call Detection**: Uses `gammu getcalllog` to check for missed calls; clears the modem's call log after each poll
+- **Deduplication**: Tracks processed calls in `/tmp/processed_calls` keyed by `number_datetime` so re-reads of the same entry are suppressed and distinct calls within an hour are both reported
 - **SMS Format**: JSON payload with `number` and `message` fields
 - **Status Feedback**: Publishes success/failure status to MQTT after each SMS attempt
 - **Extensible**: Ready for SMS receiving implementation (just uncomment function)
