@@ -98,9 +98,12 @@ check_missed_calls() {
         dedup_mark "$PROCESSED_CALLS" "$key"
     done < <(echo "$call_log" | grep -i "Missed")
 
-    # Clear the modem's call log so it stays bounded. Datetime-based dedup is
-    # the correctness mechanism; clearing is hygiene. Failures are tolerated.
-    LC_ALL=C gammu -c "$GAMMU_CONFIG" deleteallcalls >/dev/null 2>&1 || true
+    # We intentionally do NOT clear the modem's call log here. A `deleteallcalls`
+    # right after `getcalllog` opens a race window: any missed call arriving
+    # between the read and the delete is nuked from the modem without ever
+    # being processed, so the user gets no notification. Datetime-based dedup
+    # already guarantees we never re-publish a call we've seen; the modem's own
+    # FIFO rotation keeps its log bounded. Don't add a delete here.
     return 0
 }
 

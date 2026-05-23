@@ -12,18 +12,21 @@ The user-facing name in HA is "Time Logger Add-On" but the actual function is GS
 
 **Single-tool serial access.** All modem operations go through `gammu` against a generated config at `/tmp/gammurc` (`run.sh:28-33`). This is deliberate — earlier versions mixed `gammu` with other AT-command tools and hit serial port conflicts. Do not add a second tool that opens `$SERIAL_PORT` directly; route new modem features through `gammu -c "$GAMMU_CONFIG" ...`.
 
-**Polling loop with strict priority** (`run.sh:152-176`):
-1. Drain one SMS from `/tmp/sms_queue` if present (then `sleep 1`, continue — keeps outbound SMS responsive).
+**Code split:** `run.sh` is the thin driver (config, MQTT subscriber, main loop). All pure logic lives in `time_logger/lib.sh`, sourced from `/lib.sh` in the container. Tests in `tests/` source `lib.sh` directly with `gammu` and `mosquitto_pub` stubbed via PATH.
+
+**Polling loop with strict priority** (in `run.sh`):
+1. Drain one SMS from `/tmp/sms_queue` if present (then `sleep "$POST_SMS_COOLDOWN"`, continue — keeps outbound SMS responsive while giving the modem time to recover).
 2. Otherwise `gammu getcalllog` and publish any new missed calls.
-3. `check_received_sms` is a stub for inbound SMS; the gammu calls are commented out and ready to enable.
+3. `check_received_sms` is wired into `lib.sh` but its parsers (`parse_sms_dump`, `parse_sms_entry`) are TODO stubs; the call is commented out in `run.sh` until they're implemented.
 
-The loop sleeps 10s between idle cycles. The serial-port wait at the top (`run.sh:154-157`) keeps the loop alive across USB reconnects.
+The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps the loop alive across USB reconnects.
 
-**MQTT command intake is a background subscriber** (`run.sh:133-145`). `mosquitto_sub` runs in a `while read` pipeline backgrounded with `&`; it appends validated JSON to `/tmp/sms_queue`. The main loop consumes the queue. Keep this decoupling — don't call `gammu sendsms` directly from the subscriber, or you'll race the call-log poll on the serial port.
+**MQTT command intake is a background subscriber** in `run.sh`. `mosquitto_sub` runs in a `while read` pipeline backgrounded with `&`; it appends validated JSON to `/tmp/sms_queue`. The main loop consumes the queue. Keep this decoupling — don't call `gammu sendsms` directly from the subscriber, or you'll race the call-log poll on the serial port.
 
 **State files survive only inside the container's tmpfs:**
 - `/tmp/sms_queue` — line-per-SMS JSON, FIFO, drained by `sed -i '1d'`.
-- `/tmp/processed_calls` — dedup key is `${number}_$(date +%Y%m%d_%H)`, so the same number calling twice within one hour is suppressed. Trimmed to last 100 entries.
+- `/tmp/processed_calls` — dedup key is `${number}_${call_datetime}` parsed from gammu output. Trimmed to last 200 entries. We do NOT clear the modem's call log — that would race with incoming calls and silently drop them.
+- `/tmp/processed_sms` — same shape, keyed by `${location}_${datetime}` for inbound SMS (when enabled).
 - `/tmp/gammurc` — regenerated on every start from `serial_port` config.
 
 **MQTT topic shape** (base = `mqtt_topic` config, default `home/time_logger`):
@@ -42,8 +45,10 @@ Useful one-liners when debugging via the add-on shell:
 - `cat /tmp/sms_queue` — pending outbound SMS.
 - `cat /tmp/processed_calls` — dedup state.
 
-## Things to know before editing `run.sh`
+## Things to know before editing `lib.sh` / `run.sh`
 
-- The missed-call parser depends on Gammu's English output (`grep -i "Missed"` and a regex for `Number "..."`). Localized Gammu output will break it.
+- The missed-call parser depends on Gammu's English output. `LC_ALL=C` is set on every `gammu` invocation to lock the locale; preserve that if you add new gammu calls.
+- `parse_missed_call_line`'s datetime regex assumes `DD.MM.YYYY HH:MM:SS`. If your modem/gammu version emits ISO dates the parser will silently skip every line.
 - `bashio::config` returns empty strings (not unset) when a key is missing, so the `: "${VAR:=default}"` fallbacks fire only when the value is literally empty. Don't switch to `${VAR:-default}` — assignment to `VAR` is needed because later code reads it.
-- Exit status of a pipeline like `echo "$log" | grep | while read` is the status of the last command, and the `while` body runs in a subshell — variables set inside it won't escape. The current code accommodates this; preserve the pattern or refactor the whole block.
+- The missed-call loop uses process substitution (`done < <(echo "$call_log" | grep -i "Missed")`) rather than `| while`, so the loop body runs in the function's own shell and `local` variables work normally.
+- Do not add `gammu deleteallcalls` to `check_missed_calls` — see the long comment in that function for why.

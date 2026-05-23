@@ -380,8 +380,8 @@ The suite covers missed-call dedup, SMS sending, and SMS-receive plumbing. When 
 - **Polling Pattern**: Checks for SMS to send (~priority) then polls modem every ~10 seconds
 - **Queue System**: File-based queue at `/tmp/sms_queue` for reliable SMS handling
 - **No Conflicts**: Only Gammu accesses serial port - eliminates data consumption conflicts
-- **Call Detection**: Uses `gammu getcalllog` to check for missed calls; clears the modem's call log after each poll
-- **Deduplication**: Tracks processed calls in `/tmp/processed_calls` keyed by `number_datetime` so re-reads of the same entry are suppressed and distinct calls within an hour are both reported
+- **Call Detection**: Uses `gammu getcalllog` to check for missed calls; the modem's log is intentionally not cleared (would race with incoming calls)
+- **Deduplication**: Tracks processed calls in `/tmp/processed_calls` keyed by `number_datetime` so re-reads of the same entry are suppressed and distinct calls within an hour are both reported. The modem's own FIFO rotation keeps its call log bounded.
 - **SMS Format**: JSON payload with `number` and `message` fields
 - **Status Feedback**: Publishes success/failure status to MQTT after each SMS attempt
 - **Extensible**: Ready for SMS receiving implementation (just uncomment function)

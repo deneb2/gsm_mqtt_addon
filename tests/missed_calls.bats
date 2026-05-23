@@ -44,11 +44,15 @@ Call 2, Outgoing, Number "+392222222222", Date/time: 21.10.2025 15:01:00'
     [ "$output" = "0" ]
 }
 
-@test "deleteallcalls is invoked after a successful poll" {
+@test "deleteallcalls is NOT invoked (would race with incoming calls)" {
+    # Calling deleteallcalls right after getcalllog opens a window where a
+    # fresh call can land in the log and be deleted before we ever see it.
+    # We rely on datetime-keyed dedup + the modem's natural FIFO rotation
+    # to keep things correct and bounded. See lib.sh check_missed_calls.
     stub_gammu_calllog 'Call 1, Missed, Number "+393755403326", Date/time: 21.10.2025 15:02:00'
     stub_mosquitto_pub
     check_missed_calls
-    [ "$(gammu_call_count deleteallcalls)" -ge 1 ]
+    [ "$(gammu_call_count deleteallcalls)" -eq 0 ]
 }
 
 @test "gammu failure is tolerated (no crash, no publish)" {
