@@ -60,6 +60,28 @@ EOF
     [ "$output" = "0" ]
 }
 
+@test "sms_status payload is valid JSON when gammu error contains quotes/newlines" {
+    # Regression: error string was interpolated raw into the status JSON,
+    # so a quote or newline in gammu output broke the published payload.
+    cat > "$STUB_DIR/gammu" <<'EOF'
+#!/usr/bin/env bash
+printf 'Error: "device busy"\nretry later\n' >&2
+exit 5
+EOF
+    chmod +x "$STUB_DIR/gammu"
+    stub_mosquitto_pub
+    echo '{"number":"+391","message":"hi"}' > "$SMS_QUEUE"
+
+    run send_queued_sms
+    [ "$status" -eq 0 ]
+
+    # Extract the payload (everything after the first '|') and pipe to jq.
+    # If JSON is broken, jq exits non-zero.
+    payload=$(grep -F 'home/test/sms_status' "$PUBLISH_LOG" | head -n1 | cut -d'|' -f2-)
+    echo "$payload" | jq -e '.status == "failed"' >/dev/null
+    echo "$payload" | jq -e '.error | contains("device busy")' >/dev/null
+}
+
 @test "send_queued_sms drops invalid JSON entry without calling gammu" {
     : > "$STUB_DIR/gammu_was_called"
     cat > "$STUB_DIR/gammu" <<EOF
