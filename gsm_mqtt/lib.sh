@@ -124,7 +124,7 @@ parse_sms_dump() {
     [ -n "$dump" ] || return 0
     local block="" line
     while IFS= read -r line || [ -n "$line" ]; do
-        if [[ "$line" =~ ^Location[[:space:]]+[0-9]+, ]]; then
+        if [[ "$line" =~ ^Location[[:space:]]+[0-9]+,[[:space:]]+folder[[:space:]]+\"[^\"]+\",[[:space:]]+[A-Za-z]+[[:space:]]+memory ]]; then
             if [ -n "$block" ]; then
                 printf '%s' "$block" | base64 | tr -d '\n'
                 echo

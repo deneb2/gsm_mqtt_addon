@@ -133,6 +133,36 @@ EOF
     [ "${locations[1]}" = "2" ]
 }
 
+@test "parse_sms_dump does not split on a body line that looks like a Location header" {
+    # Regression: parse_sms_dump used a loose `^Location[[:space:]]+[0-9]+,`
+    # match for record boundaries, so an SMS body containing text like
+    # "Location 5, new office" was split into two corrupted records.
+    # A real boundary line always has `, folder "..." memory` shape — use
+    # that to disambiguate.
+    dump=$(cat <<'EOF'
+Location 1, folder "Inbox", SIM memory, Inbox folder
+SMS message
+SMSC number          : "+393359609600"
+Sent                 : Tue 21 Oct 2025 15:02:00 +0200
+Coding               : Default GSM alphabet (no compression)
+Remote number        : "+393358989011"
+Status               : Read
+
+Location 5, new office is at the corner.
+
+1 SMS parts in 1 SMS sequences
+EOF
+)
+    run parse_sms_dump "$dump"
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | wc -l)" -eq 1 ]
+    # And it must round-trip with the body intact.
+    parsed=$(parse_sms_entry "$output")
+    IFS='|' read -r _ _ _ body_b64 <<<"$parsed"
+    body=$(echo "$body_b64" | base64 -d)
+    [ "$body" = "Location 5, new office is at the corner." ]
+}
+
 @test "parse_sms_dump ignores trailing summary line after last block" {
     # The "N SMS parts in M SMS sequences" tail should not become a third
     # record; parse_sms_entry will still decode the two real ones.
