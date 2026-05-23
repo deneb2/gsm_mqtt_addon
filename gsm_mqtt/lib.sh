@@ -34,7 +34,7 @@ dedup_mark() {
 
 # Parse one "Missed" line from `gammu getcalllog`.
 # Echoes "number|datetime" on success, returns 1 on no match.
-# Example input: Call 1, Missed, Number "+393755403326", Date/time: 21.10.2025 15:02:00
+# Example input: Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00
 parse_missed_call_line() {
     local line="$1"
     local number datetime
