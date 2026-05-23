@@ -28,7 +28,7 @@ setup() {
     export -f bashio::log.info bashio::log.debug bashio::log.error bashio::log.warning
 
     # shellcheck disable=SC1091
-    source "$BATS_TEST_DIRNAME/../time_logger/lib.sh"
+    source "$BATS_TEST_DIRNAME/../gsm_mqtt/lib.sh"
 }
 
 # Stub `gammu` so every invocation logs args and prints fixed output.

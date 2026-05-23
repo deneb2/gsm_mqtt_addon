@@ -4,15 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A Home Assistant add-on (not a standalone app). Two shell scripts — `time_logger/run.sh` (driver) and `time_logger/lib.sh` (logic) — packaged in a hassio-addons base image. Home Assistant runs the container. There is no in-container build/lint pipeline, but a bats test suite under `tests/` runs on the host against `lib.sh` with `gammu` and `mosquitto_pub` stubbed. To ship a change, bump `version` in `time_logger/config.yaml` and commit; users pull via the add-on store using `repository.yaml`.
+A Home Assistant add-on (not a standalone app). Two shell scripts — `gsm_mqtt/run.sh` (driver) and `gsm_mqtt/lib.sh` (logic) — packaged in a hassio-addons base image. Home Assistant runs the container. There is no in-container build/lint pipeline, but a bats test suite under `tests/` runs on the host against `lib.sh` with `gammu` and `mosquitto_pub` stubbed. To ship a change, bump `version` in `gsm_mqtt/config.yaml` and commit; users pull via the add-on store using `repository.yaml`.
 
-The user-facing name in HA is "Time Logger Add-On" but the actual function is GSM modem monitoring + SMS sending over MQTT. Don't be confused by the legacy `time_logger` slug.
+The HA-facing name is "GSM MQTT Bridge"; the slug is `gsm_mqtt`. The repo was originally `test_time_addon` and the addon was called `time_logger` during initial prototyping — if you see those names in old commits or external docs, that's the legacy identity.
 
 ## Architecture (the parts that aren't obvious from one file)
 
 **Single-tool serial access.** All modem operations go through `gammu` against a generated config at `/tmp/gammurc` (built in `run.sh` from the `serial_port` setting). This is deliberate — earlier versions mixed `gammu` with other AT-command tools and hit serial port conflicts. Do not add a second tool that opens `$SERIAL_PORT` directly; route new modem features through `gammu -c "$GAMMU_CONFIG" ...`.
 
-**Code split:** `run.sh` is the thin driver (config, MQTT subscriber, main loop). All pure logic lives in `time_logger/lib.sh`, sourced from `/lib.sh` in the container. Tests in `tests/` source `lib.sh` directly with `gammu` and `mosquitto_pub` stubbed via PATH.
+**Code split:** `run.sh` is the thin driver (config, MQTT subscriber, main loop). All pure logic lives in `gsm_mqtt/lib.sh`, sourced from `/lib.sh` in the container. Tests in `tests/` source `lib.sh` directly with `gammu` and `mosquitto_pub` stubbed via PATH.
 
 **Polling loop with strict priority** (in `run.sh`):
 1. Drain one SMS from `/tmp/sms_queue` if present (then `sleep "$POST_SMS_COOLDOWN"`, continue — keeps outbound SMS responsive while giving the modem time to recover).
@@ -29,13 +29,13 @@ The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps t
 - `/tmp/processed_sms` — same shape, keyed by `${location}_${datetime}` for inbound SMS (when enabled).
 - `/tmp/gammurc` — regenerated on every start from `serial_port` config.
 
-**MQTT topic shape** (base = `mqtt_topic` config, default `home/time_logger`):
+**MQTT topic shape** (base = `mqtt_topic` config, default `home/gsm_mqtt`):
 - Subscribe: `<base>/send_sms` — payload must be `{"number":"...","message":"..."}` (validated with `jq -e '.number and .message'`).
 - Publish: `<base>` (missed-call notifications, plain text), `<base>/sms_status` (JSON with `status`: `sent`/`failed`), and `<base>/sms_received` (JSON with `from`/`timestamp`/`body`, only once the SMS-receive parsers are implemented).
 
 ## Config and permissions
 
-`time_logger/config.yaml` is the HA add-on manifest. The `options`/`schema` sections define the UI form; defaults there are also the fallback values set via `: "${VAR:=default}"` at the top of `run.sh` — keep the two in sync. `devices:` exposes `/dev/ttyUSB*`, `/dev/ttyACM*`, and `/dev/bus/usb` — needed for the modem to appear inside the container. `full_access: true` and `host_dbus: true` are currently set; tighten only if you've verified gammu still works without them.
+`gsm_mqtt/config.yaml` is the HA add-on manifest. The `options`/`schema` sections define the UI form; defaults there are also the fallback values set via `: "${VAR:=default}"` at the top of `run.sh` — keep the two in sync. `devices:` exposes `/dev/ttyUSB*`, `/dev/ttyACM*`, and `/dev/bus/usb` — needed for the modem to appear inside the container. `full_access: true` and `host_dbus: true` are currently set; tighten only if you've verified gammu still works without them.
 
 ## Tests
 

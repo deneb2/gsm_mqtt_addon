@@ -13,7 +13,7 @@ SERIAL_PORT=$(bashio::config 'serial_port')
 : "${MQTT_PORT:="1883"}"
 : "${MQTT_USER:="default_user"}"
 : "${MQTT_PASS:="default_password"}"
-: "${MQTT_TOPIC:="home/time_logger"}"
+: "${MQTT_TOPIC:="home/gsm_mqtt"}"
 : "${SERIAL_PORT:="/dev/ttyUSB2"}"
 
 export MQTT_HOST MQTT_PORT MQTT_USER MQTT_PASS MQTT_TOPIC SERIAL_PORT

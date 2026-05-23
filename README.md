@@ -1,6 +1,6 @@
-# Modem Monitor & SMS Add-On
+# GSM MQTT Bridge
 
-This Home Assistant add-on monitors a GSM/cellular modem for events and provides SMS sending capability through MQTT.
+This Home Assistant add-on bridges a GSM/cellular modem to MQTT: it publishes missed-call notifications and accepts SMS-sending commands.
 The add-on is designed to integrate modem functionality (missed call detection, SMS sending) with Home Assistant.
 
 ## Features
@@ -15,7 +15,7 @@ The add-on is designed to integrate modem functionality (missed call detection, 
 
 ## Installation Instructions
 
-To install the Time Logger add-on in Home Assistant OS (HAOS), follow these steps:
+To install the GSM MQTT Bridge add-on in Home Assistant OS (HAOS), follow these steps:
 
 1. **Add the Repository**:
    - Go to the **Settings** section of Home Assistant.
@@ -25,7 +25,7 @@ To install the Time Logger add-on in Home Assistant OS (HAOS), follow these step
    - Add the repository URL where your add-on resides (the URL to your `repository.yaml`).
 
 2. **Install the Add-On**:
-   - Find **Time Logger Add-On** in your add-on store.
+   - Find **GSM MQTT Bridge** in your add-on store.
    - Click on it and then click on the **Install** button.
 
 3. **Configure the Add-On**:
@@ -34,7 +34,7 @@ To install the Time Logger add-on in Home Assistant OS (HAOS), follow these step
    - `mqtt_port`: The port of your MQTT broker (default is `1883`).
    - `mqtt_user`: Your MQTT username.
    - `mqtt_pass`: Your MQTT password.
-   - `mqtt_topic`: The base topic for modem events (default is `home/time_logger`).
+   - `mqtt_topic`: The base topic for modem events (default is `home/gsm_mqtt`).
    - `serial_port`: The serial port where your GSM modem is connected (default is `/dev/ttyUSB2`).
    - Click **Save**.
 
@@ -43,14 +43,14 @@ To install the Time Logger add-on in Home Assistant OS (HAOS), follow these step
 
 ## MQTT Topics
 
-The add-on uses the following MQTT topics (assuming `mqtt_topic` is set to `home/time_logger`):
+The add-on uses the following MQTT topics (assuming `mqtt_topic` is set to `home/gsm_mqtt`):
 
 - **Subscribe Topics** (add-on listens to these):
-  - `home/time_logger/send_sms` - Send SMS commands to the modem
+  - `home/gsm_mqtt/send_sms` - Send SMS commands to the modem
 
 - **Publish Topics** (add-on publishes to these):
-  - `home/time_logger` - Modem events (missed calls, etc.)
-  - `home/time_logger/sms_status` - SMS delivery status feedback
+  - `home/gsm_mqtt` - Modem events (missed calls, etc.)
+  - `home/gsm_mqtt/sms_status` - SMS delivery status feedback
 
 ## Sending SMS from Home Assistant
 
@@ -69,7 +69,7 @@ conditions: []
 actions:
   - action: mqtt.publish
     data:
-      topic: "home/time_logger/send_sms"
+      topic: "home/gsm_mqtt/send_sms"
       payload: >
         {
           "number": "+1234567890",
@@ -95,7 +95,7 @@ send_sms:
   sequence:
     - action: mqtt.publish
       data:
-        topic: "home/time_logger/send_sms"
+        topic: "home/gsm_mqtt/send_sms"
         payload: >
           {
             "number": "{{ phone_number }}",
@@ -128,7 +128,7 @@ Go to **Developer Tools → Services**:
 **Service:** `mqtt.publish`  
 **Service Data:**
 ```yaml
-topic: home/time_logger/send_sms
+topic: home/gsm_mqtt/send_sms
 payload: '{"number": "+1234567890", "message": "Test from Home Assistant"}'
 ```
 
@@ -143,7 +143,7 @@ Click **"Call Service"** to send a test SMS!
 ```yaml
 - action: mqtt.publish
   data:
-    topic: "home/time_logger/send_sms"
+    topic: "home/gsm_mqtt/send_sms"
     payload: '{"number": "+1234567890", "message": "Your message here"}'
 ```
 
@@ -152,7 +152,7 @@ Click **"Call Service"** to send a test SMS!
 ```yaml
 - action: mqtt.publish
   data:
-    topic: "home/time_logger/send_sms"
+    topic: "home/gsm_mqtt/send_sms"
     payload: '{"number": "+1234567890", "message": "Alert at {{ now().strftime(''%H:%M'') }}: {{ trigger.to_state.state }}"}'
 ```
 
@@ -169,7 +169,7 @@ alias: "Notify on Missed Call"
 description: "Get notification when modem receives a call"
 triggers:
   - trigger: mqtt
-    topic: home/time_logger
+    topic: home/gsm_mqtt
     enabled: true
 conditions: []
 actions:
@@ -195,7 +195,7 @@ conditions: []
 actions:
   - action: mqtt.publish
     data:
-      topic: "home/time_logger/send_sms"
+      topic: "home/gsm_mqtt/send_sms"
       payload: >
         {
           "number": "+1234567890",
@@ -237,7 +237,7 @@ conditions: []
 actions:
   - action: mqtt.publish
     data:
-      topic: "home/time_logger/send_sms"
+      topic: "home/gsm_mqtt/send_sms"
       payload: >
         {
           "number": "+1234567890",
@@ -245,7 +245,7 @@ actions:
         }
   - action: mqtt.publish
     data:
-      topic: "home/time_logger/send_sms"
+      topic: "home/gsm_mqtt/send_sms"
       payload: >
         {
           "number": "+0987654321",
@@ -268,7 +268,7 @@ conditions: []
 actions:
   - action: mqtt.publish
     data:
-      topic: "home/time_logger/send_sms"
+      topic: "home/gsm_mqtt/send_sms"
       payload: >
         {
           "number": "+1234567890",
@@ -292,7 +292,7 @@ conditions: []
 actions:
   - action: mqtt.publish
     data:
-      topic: "home/time_logger/send_sms"
+      topic: "home/gsm_mqtt/send_sms"
       payload: >
         {
           "number": "+1234567890",
@@ -310,7 +310,7 @@ alias: "SMS Delivery Status Monitor"
 description: "Log SMS delivery status"
 triggers:
   - trigger: mqtt
-    topic: home/time_logger/sms_status
+    topic: home/gsm_mqtt/sms_status
 conditions: []
 actions:
   - action: notify.persistent_notification
