@@ -199,6 +199,33 @@ EOF
     [[ "$datetime" = *_+020000 ]]
 }
 
+@test "parse_sms_entry accepts an empty body (delivery report shape)" {
+    # Bounced/empty SMS (e.g. some delivery reports) arrive with no body
+    # text between the headers and the next block. parse_sms_entry must
+    # accept this and emit a record with an empty body_b64, so the
+    # publish path produces body:"" in JSON rather than dropping the SMS.
+    block=$(cat <<'EOF'
+Location 9, folder "Inbox", SIM memory, Inbox folder
+SMS message
+SMSC number          : "+393359609600"
+Sent                 : Tue 21 Oct 2025 11:00:00 +0200
+Coding               : Default GSM alphabet (no compression)
+Remote number        : "+393358989011"
+Status               : Read
+
+EOF
+)
+    encoded=$(printf '%s' "$block" | base64 | tr -d '\n')
+    run parse_sms_entry "$encoded"
+    [ "$status" -eq 0 ]
+    IFS='|' read -r location sender datetime body_b64 <<<"$output"
+    [ "$location" = "9" ]
+    [ "$datetime" = "2025-10-21T11:00:00+0200" ]
+    [ -z "$body_b64" ]
+    body=$(echo "$body_b64" | base64 -d 2>/dev/null)
+    [ -z "$body" ]
+}
+
 @test "parse_sms_entry preserves a body containing a double quote" {
     # JSON publishing path uses jq --arg so escapes are handled downstream,
     # but the parser itself must round-trip the raw bytes through base64.
