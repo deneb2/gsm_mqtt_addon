@@ -126,13 +126,13 @@ parse_sms_dump() {
     while IFS= read -r line || [ -n "$line" ]; do
         if [[ "$line" =~ ^Location[[:space:]]+[0-9]+, ]]; then
             if [ -n "$block" ]; then
-                printf '%s' "$block" | base64 -w 0
+                printf '%s' "$block" | base64 | tr -d '\n'
                 echo
             fi
             block="$line"
         elif [[ "$line" =~ ^[0-9]+[[:space:]]+SMS[[:space:]]+parts ]]; then
             if [ -n "$block" ]; then
-                printf '%s' "$block" | base64 -w 0
+                printf '%s' "$block" | base64 | tr -d '\n'
                 echo
                 block=""
             fi
@@ -141,7 +141,7 @@ parse_sms_dump() {
         fi
     done <<< "$dump"
     if [ -n "$block" ]; then
-        printf '%s' "$block" | base64 -w 0
+        printf '%s' "$block" | base64 | tr -d '\n'
         echo
     fi
 }
@@ -202,7 +202,7 @@ parse_sms_entry() {
     fi
 
     local body_b64
-    body_b64=$(printf '%s' "$body" | base64 -w 0)
+    body_b64=$(printf '%s' "$body" | base64 | tr -d '\n')
     echo "${location}|${sender}|${datetime}|${body_b64}"
 }
 
