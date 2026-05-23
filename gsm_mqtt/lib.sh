@@ -158,6 +158,9 @@ parse_sms_entry() {
     local line
     while IFS= read -r line || [ -n "$line" ]; do
         if [ $in_body -eq 0 ]; then
+            # Loose by design: body lines starting with "Location N, ..."
+            # are kept safe by the in_body guard, not by tightening this
+            # regex. parse_sms_dump uses the strict folder+memory variant.
             if [[ "$line" =~ ^Location[[:space:]]+([0-9]+) ]]; then
                 location="${BASH_REMATCH[1]}"
             elif [[ "$line" =~ ^Remote[[:space:]]+number[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
