@@ -120,10 +120,30 @@ check_missed_calls() {
 # tests/sms_receive.bats; the modem-specific parsers below are TODO stubs.
 # Drop in real implementations of parse_sms_dump and parse_sms_entry to enable.
 parse_sms_dump() {
-    # TODO: split `gammu getallsms` output into one record per SMS, one per line.
-    # Echo each record verbatim (escaped as needed) so the caller's `while read`
-    # can hand it to parse_sms_entry.
-    return 0
+    local dump="$1"
+    [ -n "$dump" ] || return 0
+    local block="" line
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^Location[[:space:]]+[0-9]+, ]]; then
+            if [ -n "$block" ]; then
+                printf '%s' "$block" | base64 -w 0
+                echo
+            fi
+            block="$line"
+        elif [[ "$line" =~ ^[0-9]+[[:space:]]+SMS[[:space:]]+parts ]]; then
+            if [ -n "$block" ]; then
+                printf '%s' "$block" | base64 -w 0
+                echo
+                block=""
+            fi
+        elif [ -n "$block" ]; then
+            block+=$'\n'"$line"
+        fi
+    done <<< "$dump"
+    if [ -n "$block" ]; then
+        printf '%s' "$block" | base64 -w 0
+        echo
+    fi
 }
 
 parse_sms_entry() {

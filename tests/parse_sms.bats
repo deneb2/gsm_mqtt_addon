@@ -78,6 +78,69 @@ EOF
     [ "$body" = "$expected" ]
 }
 
+sample_dump_two_sms() {
+    cat <<'EOF'
+Location 1, folder "Inbox", SIM memory, Inbox folder
+SMS message
+SMSC number          : "+393359609600"
+Sent                 : Tue 21 Oct 2025 15:02:00 +0200
+Coding               : Default GSM alphabet (no compression)
+Remote number        : "+393358989011"
+Status               : Read
+
+First message body.
+
+Location 2, folder "Inbox", SIM memory, Inbox folder
+SMS message
+SMSC number          : "+393359609600"
+Sent                 : Tue 21 Oct 2025 15:05:00 +0200
+Coding               : Default GSM alphabet (no compression)
+Remote number        : "+393358989011"
+Status               : UnRead
+
+Second message body.
+
+2 SMS parts in 2 SMS sequences
+EOF
+}
+
+@test "parse_sms_dump on empty input emits nothing" {
+    run parse_sms_dump ""
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_sms_dump emits one line per SMS record" {
+    dump=$(sample_dump_two_sms)
+    run parse_sms_dump "$dump"
+    [ "$status" -eq 0 ]
+    # One base64 string per line, no embedded newlines.
+    [ "$(echo "$output" | wc -l)" -eq 2 ]
+}
+
+@test "parse_sms_dump output round-trips through parse_sms_entry" {
+    dump=$(sample_dump_two_sms)
+    records=$(parse_sms_dump "$dump")
+    # Each record is a base64 string parse_sms_entry can decode.
+    locations=()
+    while IFS= read -r record; do
+        parsed=$(parse_sms_entry "$record")
+        [ -n "$parsed" ]
+        IFS='|' read -r loc _ _ _ <<<"$parsed"
+        locations+=("$loc")
+    done <<< "$records"
+    [ "${locations[0]}" = "1" ]
+    [ "${locations[1]}" = "2" ]
+}
+
+@test "parse_sms_dump ignores trailing summary line after last block" {
+    # The "N SMS parts in M SMS sequences" tail should not become a third
+    # record; parse_sms_entry will still decode the two real ones.
+    dump=$(sample_dump_two_sms)
+    run parse_sms_dump "$dump"
+    [ "$(echo "$output" | wc -l)" -eq 2 ]
+}
+
 @test "parse_sms_entry preserves a body containing a double quote" {
     # JSON publishing path uses jq --arg so escapes are handled downstream,
     # but the parser itself must round-trip the raw bytes through base64.
