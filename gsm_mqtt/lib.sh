@@ -127,9 +127,63 @@ parse_sms_dump() {
 }
 
 parse_sms_entry() {
-    # TODO: given one SMS record, echo "location|sender|datetime|body_base64".
-    # Return 1 if the record cannot be parsed (skipped by the caller).
-    return 1
+    local b64="$1"
+    [ -n "$b64" ] || return 1
+    local block
+    block=$(printf '%s' "$b64" | base64 -d 2>/dev/null) || return 1
+    [ -n "$block" ] || return 1
+
+    local location="" sender="" datetime_raw=""
+    local in_body=0 body=""
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ $in_body -eq 0 ]; then
+            if [[ "$line" =~ ^Location[[:space:]]+([0-9]+) ]]; then
+                location="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ ^Remote[[:space:]]+number[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+                sender="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ ^Sent[[:space:]]*:[[:space:]]+(.+)$ ]]; then
+                datetime_raw="${BASH_REMATCH[1]}"
+                datetime_raw="${datetime_raw%"${datetime_raw##*[![:space:]]}"}"
+            elif [[ "$line" =~ ^Status ]]; then
+                in_body=1
+            fi
+        else
+            if [ -z "$body" ]; then
+                [ -z "$line" ] && continue
+                body="$line"
+            else
+                body+=$'\n'"$line"
+            fi
+        fi
+    done <<< "$block"
+
+    [ -n "$location" ] && [ -n "$sender" ] && [ -n "$datetime_raw" ] || return 1
+
+    while [ -n "$body" ] && [ "${body: -1}" = $'\n' ]; do
+        body="${body%$'\n'}"
+    done
+
+    local datetime
+    if [[ "$datetime_raw" =~ ([0-9]+)[[:space:]]+([A-Za-z]+)[[:space:]]+([0-9]+)[[:space:]]+([0-9:]+)[[:space:]]+([+-][0-9]+) ]]; then
+        local day="${BASH_REMATCH[1]}" mon_name="${BASH_REMATCH[2]}"
+        local year="${BASH_REMATCH[3]}" hms="${BASH_REMATCH[4]}" tz="${BASH_REMATCH[5]}"
+        local mon
+        case "$mon_name" in
+            Jan) mon=01;; Feb) mon=02;; Mar) mon=03;; Apr) mon=04;;
+            May) mon=05;; Jun) mon=06;; Jul) mon=07;; Aug) mon=08;;
+            Sep) mon=09;; Oct) mon=10;; Nov) mon=11;; Dec) mon=12;;
+            *) return 1;;
+        esac
+        printf -v day "%02d" "$day"
+        datetime="${year}-${mon}-${day}T${hms}${tz}"
+    else
+        datetime="${datetime_raw// /_}"
+    fi
+
+    local body_b64
+    body_b64=$(printf '%s' "$body" | base64 -w 0)
+    echo "${location}|${sender}|${datetime}|${body_b64}"
 }
 
 check_received_sms() {
