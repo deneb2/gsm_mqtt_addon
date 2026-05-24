@@ -112,10 +112,32 @@ EOF
     [ "$output" = "0" ]
 }
 
-@test "TODO: parse_sms_entry stub returns 1 (parser not yet implemented)" {
-    # Sanity check that the real lib.sh stub still refuses to parse anything,
-    # so production deployments without the parser don't accidentally publish
-    # garbage. Remove this test once the real parser is implemented.
-    run parse_sms_entry 'any input'
-    [ "$status" -eq 1 ]
+@test "end-to-end: real parsers publish from realistic gammu output" {
+    # No install_fake_parsers here — exercise the real parse_sms_dump
+    # and parse_sms_entry against a stub modem emitting realistic
+    # `gammu getallsms` output.
+    stub_gammu_sms "$(cat <<'EOF'
+Location 1, folder "Inbox", SIM memory, Inbox folder
+SMS message
+SMSC number          : "+393359609600"
+Sent                 : Tue 21 Oct 2025 15:02:00 +0200
+Coding               : Default GSM alphabet (no compression)
+Remote number        : "+393358989011"
+Status               : UnRead
+
+Hello from real parsers.
+
+1 SMS parts in 1 SMS sequences
+EOF
+)"
+    stub_mosquitto_pub
+
+    check_received_sms
+
+    [ "$(publish_count 'home/test/sms_received')" -eq 1 ]
+    [ "$(publish_count '+393358989011')" -eq 1 ]
+    [ "$(publish_count 'Hello from real parsers.')" -eq 1 ]
+    [ "$(publish_count '2025-10-21T15:02:00+0200')" -eq 1 ]
+    # deletesms invoked for the published SMS at its location.
+    [ "$(gammu_call_count 'deletesms 1 1')" -ge 1 ]
 }

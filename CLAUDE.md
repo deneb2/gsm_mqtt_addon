@@ -17,7 +17,7 @@ The HA-facing name is "GSM MQTT Bridge"; the slug is `gsm_mqtt`. The repo was or
 **Polling loop with strict priority** (in `run.sh`):
 1. Drain one SMS from `/tmp/sms_queue` if present (then `sleep "$POST_SMS_COOLDOWN"`, continue — keeps outbound SMS responsive while giving the modem time to recover).
 2. Otherwise `gammu getcalllog` and publish any new missed calls.
-3. `check_received_sms` is wired into `lib.sh` but its parsers (`parse_sms_dump`, `parse_sms_entry`) are TODO stubs; the call is commented out in `run.sh` until they're implemented.
+3. `check_received_sms` runs `gammu getallsms`, parses each record via `parse_sms_dump` (splits into base64-encoded blocks, one per SMS) and `parse_sms_entry` (extracts `location|sender|datetime|body_b64` with the datetime ISO-normalized), publishes to `<base>/sms_received`, dedups in `/tmp/processed_sms`, and deletes the SMS from SIM memory.
 
 The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps the loop alive across USB reconnects.
 
@@ -26,12 +26,12 @@ The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps t
 **State files survive only inside the container's tmpfs:**
 - `/tmp/sms_queue` — line-per-SMS JSON, FIFO, drained by `sed -i '1d'`.
 - `/tmp/processed_calls` — dedup key is `${number}_${call_datetime}` parsed from gammu output. Trimmed to last 200 entries. We do NOT clear the modem's call log — that would race with incoming calls and silently drop them.
-- `/tmp/processed_sms` — same shape, keyed by `${location}_${datetime}` for inbound SMS (when enabled).
+- `/tmp/processed_sms` — same shape, keyed by `${location}_${datetime}` for inbound SMS.
 - `/tmp/gammurc` — regenerated on every start from `serial_port` config.
 
 **MQTT topic shape** (base = `mqtt_topic` config, default `home/gsm_mqtt`):
 - Subscribe: `<base>/send_sms` — payload must be `{"number":"...","message":"..."}` (validated with `jq -e '.number and .message'`).
-- Publish: `<base>` (missed-call notifications, plain text), `<base>/sms_status` (JSON with `status`: `sent`/`failed`), and `<base>/sms_received` (JSON with `from`/`timestamp`/`body`, only once the SMS-receive parsers are implemented).
+- Publish: `<base>` (missed-call notifications, plain text), `<base>/sms_status` (JSON with `status`: `sent`/`failed`), and `<base>/sms_received` (JSON with `from`/`timestamp`/`body`). `timestamp` is ISO 8601 with timezone offset, parsed from gammu's English-locale `Sent` field.
 
 ## Config and permissions
 
@@ -46,8 +46,10 @@ The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps t
 Useful one-liners when debugging via the add-on shell:
 - `gammu -c /tmp/gammurc identify` — confirm modem is reachable.
 - `gammu -c /tmp/gammurc getcalllog` — what the missed-call detector sees.
+- `gammu -c /tmp/gammurc getallsms` — what the SMS-receive parser sees.
+- `gammu -c /tmp/gammurc getsmsfolders` — list memory locations; folder 1 is usually SIM (SM), folder 2 is modem memory (ME).
 - `cat /tmp/sms_queue` — pending outbound SMS.
-- `cat /tmp/processed_calls` — dedup state.
+- `cat /tmp/processed_calls` / `cat /tmp/processed_sms` — dedup state.
 
 ## Things to know before editing `lib.sh` / `run.sh`
 
@@ -56,3 +58,6 @@ Useful one-liners when debugging via the add-on shell:
 - `bashio::config` returns empty strings (not unset) when a key is missing, so the `: "${VAR:=default}"` fallbacks fire only when the value is literally empty. Don't switch to `${VAR:-default}` — assignment to `VAR` is needed because later code reads it.
 - The missed-call loop uses process substitution (`done < <(echo "$call_log" | grep -i "Missed")`) rather than `| while`, so the loop body runs in the function's own shell and `local` variables work normally.
 - Do not add `gammu deleteallcalls` to `check_missed_calls` — see the long comment in that function for why.
+- `check_received_sms` hardcodes `deletesms 1 "$location"` — memory `1` is SIM (`SM`). If the modem stores inbound SMS in modem memory (`ME`, often `2`) the delete silently fails (the call is suffixed `|| true`), dedup catches the re-publish, but the modem's inbox fills until cleared manually. Run `gammu -c /tmp/gammurc getsmsfolders` to see which memory your modem uses; if it's not SM=1, the constant needs to change or move to config.
+- `parse_sms_entry`'s ISO datetime conversion is locked to `LC_ALL=C` gammu output (`Tue 21 Oct 2025 15:02:00 +0200`). If the modem or gammu version emits a different date shape (e.g. ISO, locale-specific abbreviations, 6-digit TZ) the regex falls through to the underscore-escaped raw form — dedup still works but the published `timestamp` won't be ISO 8601.
+- `lib.sh` uses `base64 | tr -d '\n'` rather than `base64 -w 0` because the addon's Alpine base ships BusyBox, which doesn't accept `-w`. Preserve the `tr -d '\n'` chain on any new encoding calls.
