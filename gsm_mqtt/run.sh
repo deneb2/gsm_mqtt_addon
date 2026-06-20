@@ -72,11 +72,13 @@ while true; do
     fi
 
     # Priority 2: Check for missed calls
+    # `|| true` because bashio enables `set -e` and a transient gammu
+    # failure (returns 1) would otherwise kill the entire script.
     bashio::log.debug "Checking for missed calls"
-    check_missed_calls
+    check_missed_calls || true
 
     # Priority 3: Check for received SMS
-    check_received_sms
+    check_received_sms || true
 
     sleep 10
 done
