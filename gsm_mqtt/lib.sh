@@ -9,6 +9,7 @@
 : "${GAMMU_CONFIG:=/tmp/gammurc}"
 : "${DEDUP_TRIM:=200}"
 : "${POST_SMS_COOLDOWN:=3}"
+: "${MC_SNAPSHOT_SIZE:=100}"
 
 emit_event() {
     local topic_suffix="$1"
@@ -30,19 +31,6 @@ dedup_mark() {
     echo "$key" >> "$state_file"
     tail -n "$DEDUP_TRIM" "$state_file" > "$state_file.tmp" 2>/dev/null \
         && mv "$state_file.tmp" "$state_file"
-}
-
-# Parse one "Missed" line from `gammu getcalllog`.
-# Echoes "number|datetime" on success, returns 1 on no match.
-# Example input: Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00
-parse_missed_call_line() {
-    local line="$1"
-    local number datetime
-    [[ "$line" =~ [Nn]umber[[:space:]]*[\"\']?([+0-9]+) ]] || return 1
-    number="${BASH_REMATCH[1]}"
-    [[ "$line" =~ [Dd]ate/time:[[:space:]]*([0-9.]+[[:space:]]+[0-9:]+) ]] || return 1
-    datetime="${BASH_REMATCH[1]// /_}"
-    echo "${number}|${datetime}"
 }
 
 send_queued_sms() {
@@ -84,41 +72,139 @@ send_queued_sms() {
     return 0
 }
 
-check_missed_calls() {
-    local call_log exit_code
-    call_log=$(LC_ALL=C gammu -c "$GAMMU_CONFIG" getcalllog 2>&1)
-    exit_code=$?
-    if [ $exit_code -ne 0 ]; then
-        bashio::log.debug "Could not read call log (modem may not support it): $call_log"
-        return 1
-    fi
-
-    local line parsed number datetime key
-    while IFS= read -r line; do
-        parsed=$(parse_missed_call_line "$line") || continue
-        number="${parsed%%|*}"
-        datetime="${parsed##*|}"
-        key="${number}_${datetime}"
-        if dedup_seen "$PROCESSED_CALLS" "$key"; then
-            continue
+# Parse `gammu getmemory MC 1 N` output into a `|`-separated single
+# line of MC_SNAPSHOT_SIZE numbers, ordered Location 1 first (Location 1
+# is the newest call on this hardware — confirmed empirically against a
+# SIM7600E-H). Empty slots become empty fields so positional comparison
+# works. Always echoes a snapshot (all-empty when MC is empty) so the
+# caller can persist a baseline even for an empty MC.
+parse_mc_snapshot() {
+    local dump="$1"
+    local -a slots=()
+    local cur_loc="" line
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^Memory[[:space:]]+MC,[[:space:]]+Location[[:space:]]+([0-9]+) ]]; then
+            cur_loc="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^General[[:space:]]+number[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+            local num="${BASH_REMATCH[1]}"
+            if [ -n "$cur_loc" ]; then
+                slots[$((cur_loc - 1))]="$num"
+                cur_loc=""
+            fi
         fi
-        bashio::log.info "Missed call from: $number"
-        emit_event "" "Missed call from: $number"
-        dedup_mark "$PROCESSED_CALLS" "$key"
-    done < <(echo "$call_log" | grep -i "Missed")
+    done <<< "$dump"
 
-    # We intentionally do NOT clear the modem's call log here. A `deleteallcalls`
-    # right after `getcalllog` opens a race window: any missed call arriving
-    # between the read and the delete is nuked from the modem without ever
-    # being processed, so the user gets no notification. Datetime-based dedup
-    # already guarantees we never re-publish a call we've seen; the modem's own
-    # FIFO rotation keeps its log bounded. Don't add a delete here.
+    local i out=""
+    for ((i = 0; i < MC_SNAPSHOT_SIZE; i++)); do
+        out+="${slots[$i]:-}|"
+    done
+    # Always emit the snapshot, even when every slot is empty, so
+    # check_missed_calls can persist an "empty MC" baseline. Without
+    # this, the first real call after an empty-MC poll has no baseline
+    # to shift against and gets silently swallowed.
+    printf '%s\n' "$out"
+}
+
+# Given the new and old snapshots, find the shift amount k such that
+# new[k..N-1] == old[0..N-1-k]. Returns k in 1..N-1 on a partial-overlap
+# shift, or N+1 if no shift matches (k=N would mean every entry is new
+# with no overlap to old — treated as the modem-reset / huge-burst case
+# the caller should resync silently rather than spam, so the loop
+# deliberately stops at k = N - 1). The "snapshots identical" case is
+# checked by the caller before calling here.
+mc_shift_amount() {
+    local -n _shift_new=$1
+    local -n _shift_old=$2
+    local n=${#_shift_new[@]}
+    local k i match
+    for ((k = 1; k < n; k++)); do
+        match=1
+        for ((i = 0; i < n - k; i++)); do
+            if [ "${_shift_new[$((k + i))]}" != "${_shift_old[$i]}" ]; then
+                match=0
+                break
+            fi
+        done
+        if [ "$match" = "1" ]; then
+            echo "$k"
+            return 0
+        fi
+    done
+    echo "$((n + 1))"
     return 0
 }
 
-# Placeholder for inbound SMS handling. Wired into the main loop and into
-# tests/sms_receive.bats; the modem-specific parsers below are TODO stubs.
-# Drop in real implementations of parse_sms_dump and parse_sms_entry to enable.
+check_missed_calls() {
+    local mc_dump exit_code
+    mc_dump=$(LC_ALL=C gammu -c "$GAMMU_CONFIG" getmemory MC 1 "$MC_SNAPSHOT_SIZE" 2>&1)
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        bashio::log.debug "Could not read MC memory (modem may not support it): $mc_dump"
+        return 1
+    fi
+
+    local new_snapshot
+    new_snapshot=$(parse_mc_snapshot "$mc_dump")
+    # parse_mc_snapshot always emits a snapshot (just pipes when MC is
+    # empty); this guard is purely defensive.
+    [ -n "$new_snapshot" ] || return 0
+
+    local last_snapshot=""
+    [ -s "$PROCESSED_CALLS" ] && last_snapshot=$(tail -n 1 "$PROCESSED_CALLS")
+
+    if [ "$new_snapshot" = "$last_snapshot" ]; then
+        return 0
+    fi
+
+    if [ -z "$last_snapshot" ]; then
+        bashio::log.info "Missed-call baseline recorded (no notification on initial poll)"
+        dedup_mark "$PROCESSED_CALLS" "$new_snapshot"
+        return 0
+    fi
+
+    local -a new_arr old_arr
+    IFS='|' read -ra new_arr <<< "$new_snapshot"
+    IFS='|' read -ra old_arr <<< "$last_snapshot"
+    # `IFS='|' read -ra` strips ONE trailing empty field after a
+    # trailing delimiter (bash 5.2 behavior), so a snapshot of exactly
+    # MC_SNAPSHOT_SIZE pipes splits to MC_SNAPSHOT_SIZE fields directly.
+    # No manual trim — the earlier `unset 'arr[-1]'` here destroyed a
+    # legitimate empty slot whenever the last MC entry was empty.
+
+    local k
+    k=$(mc_shift_amount new_arr old_arr)
+
+    if [ "$k" -gt "$MC_SNAPSHOT_SIZE" ]; then
+        # Lists are unrelated (modem reset, USB replug, burst > snapshot
+        # size). Can't reconstruct what was missed; resync the baseline
+        # silently rather than spam the user.
+        bashio::log.info "Missed-call snapshot resynced (no overlap with previous state)"
+        dedup_mark "$PROCESSED_CALLS" "$new_snapshot"
+        return 0
+    fi
+
+    local i number
+    for ((i = 0; i < k; i++)); do
+        number="${new_arr[$i]}"
+        [ -n "$number" ] || continue
+        bashio::log.info "Missed call from: $number"
+        emit_event "" "Missed call from: $number"
+    done
+    dedup_mark "$PROCESSED_CALLS" "$new_snapshot"
+
+    # We never call `gammu deletememory MC` / `deleteallmemory MC`. Real-world
+    # SIMs reject them with "Security error" (GSM 07.07 says +CPBW does not
+    # apply to MC storage) and the FIFO rotation handles overflow naturally.
+    return 0
+}
+
+# Split a `gammu getallsms` dump into one base64-encoded record per
+# line. Each record is a full multi-line SMS block; base64 keeps the
+# inter-function pipe newline-safe so check_received_sms can iterate
+# with `while IFS= read -r entry`. Block boundaries are the
+# `Location N, folder "...", <Word> memory` header (strict shape that
+# body text can't accidentally mimic) and the trailing
+# `N SMS parts in M sequences` summary line.
 parse_sms_dump() {
     local dump="$1"
     [ -n "$dump" ] || return 0

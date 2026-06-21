@@ -16,6 +16,10 @@ setup() {
 
     export MQTT_HOST=h MQTT_PORT=1 MQTT_USER=u MQTT_PASS=p MQTT_TOPIC=home/test
 
+    # Use a small MC window in tests so fixtures stay readable. In
+    # production this defaults to 100 (the SIM7600 MC capacity).
+    export MC_SNAPSHOT_SIZE=5
+
     # bashio::log.* doesn't exist on the host — shim it out.
     # shellcheck disable=SC2317
     bashio::log.info()    { :; }
@@ -54,20 +58,25 @@ EOF
     export -f "$router"
 }
 
-# Convenience: stub gammu to print a static body for getcalllog and succeed
-# silently for deleteallcalls. Anything else exits non-zero.
-stub_gammu_calllog() {
+# Convenience: stub gammu so `getmemory MC 1 100` prints the supplied
+# body and anything else exits non-zero. The body should be the raw
+# multi-block output gammu emits for missed-call memory, e.g.:
+#     Memory MC, Location 1
+#     General number       : "+39…"
+#     Name                 : ""
+#     ...
+stub_gammu_mc() {
     local body="$1"
-    _calllog_body="$body"
-    export _calllog_body
-    _route_calllog() {
-        case "$1" in
-            getcalllog) printf '%s\n' "$_calllog_body"; return 0;;
-            deleteallcalls) return 0;;
-            *) return 1;;
-        esac
+    _mc_body="$body"
+    export _mc_body
+    _route_mc() {
+        if [ "$1" = "getmemory" ] && [ "$2" = "MC" ]; then
+            printf '%s\n' "$_mc_body"
+            return 0
+        fi
+        return 1
     }
-    stub_gammu_dispatch _route_calllog
+    stub_gammu_dispatch _route_mc
 }
 
 stub_mosquitto_pub() {
