@@ -13,10 +13,10 @@ sample_block_single() {
     cat <<'EOF'
 Location 1, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393359609600"
+SMSC number          : "+390000000000"
 Sent                 : Tue 21 Oct 2025 15:02:00 +0200
 Coding               : Default GSM alphabet (no compression)
-Remote number        : "+393358989011"
+Remote number        : "+391234567890"
 Status               : Read
 
 Hello, this is a test message.
@@ -35,7 +35,7 @@ b64_of_block() {
     # Expected: location|sender|datetime|body_b64
     IFS='|' read -r location sender datetime body_b64 <<<"$output"
     [ "$location" = "1" ]
-    [ "$sender" = "+393358989011" ]
+    [ "$sender" = "+391234567890" ]
     [ "$datetime" = "2025-10-21T15:02:00+0200" ]
     body=$(echo "$body_b64" | base64 -d)
     [ "$body" = "Hello, this is a test message." ]
@@ -56,10 +56,10 @@ b64_of_block() {
     block=$(cat <<'EOF'
 Location 3, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393359609600"
+SMSC number          : "+390000000000"
 Sent                 : Tue 21 Oct 2025 09:15:30 +0200
 Coding               : Default GSM alphabet (no compression)
-Remote number        : "+393358989011"
+Remote number        : "+391234567890"
 Status               : UnRead
 
 Line one
@@ -82,20 +82,20 @@ sample_dump_two_sms() {
     cat <<'EOF'
 Location 1, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393359609600"
+SMSC number          : "+390000000000"
 Sent                 : Tue 21 Oct 2025 15:02:00 +0200
 Coding               : Default GSM alphabet (no compression)
-Remote number        : "+393358989011"
+Remote number        : "+391234567890"
 Status               : Read
 
 First message body.
 
 Location 2, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393359609600"
+SMSC number          : "+390000000000"
 Sent                 : Tue 21 Oct 2025 15:05:00 +0200
 Coding               : Default GSM alphabet (no compression)
-Remote number        : "+393358989011"
+Remote number        : "+391234567890"
 Status               : UnRead
 
 Second message body.
@@ -142,10 +142,10 @@ EOF
     dump=$(cat <<'EOF'
 Location 1, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393359609600"
+SMSC number          : "+390000000000"
 Sent                 : Tue 21 Oct 2025 15:02:00 +0200
 Coding               : Default GSM alphabet (no compression)
-Remote number        : "+393358989011"
+Remote number        : "+391234567890"
 Status               : Read
 
 Location 5, new office is at the corner.
@@ -179,7 +179,7 @@ EOF
     block=$(cat <<'EOF'
 Location 0, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393205951500"
+SMSC number          : "+390000000000"
 Sent                 : Tue Oct 21 09:09:43 2025 +0200
 Coding               : Default GSM alphabet (no compression)
 Remote number        : "WINDTRE"
@@ -206,10 +206,10 @@ EOF
     block=$(cat <<'EOF'
 Location 7, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393359609600"
+SMSC number          : "+390000000000"
 Sent                 : Tue 21 Oct 2025 15:02:00 +020000
 Coding               : Default GSM alphabet (no compression)
-Remote number        : "+393358989011"
+Remote number        : "+391234567890"
 Status               : UnRead
 
 Bad timezone test.
@@ -234,10 +234,10 @@ EOF
     block=$(cat <<'EOF'
 Location 9, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393359609600"
+SMSC number          : "+390000000000"
 Sent                 : Tue 21 Oct 2025 11:00:00 +0200
 Coding               : Default GSM alphabet (no compression)
-Remote number        : "+393358989011"
+Remote number        : "+391234567890"
 Status               : Read
 
 EOF
@@ -259,10 +259,10 @@ EOF
     block=$(cat <<'EOF'
 Location 5, folder "Inbox", SIM memory, Inbox folder
 SMS message
-SMSC number          : "+393359609600"
+SMSC number          : "+390000000000"
 Sent                 : Wed 22 Oct 2025 08:00:00 +0200
 Coding               : Default GSM alphabet (no compression)
-Remote number        : "+393358989011"
+Remote number        : "+391234567890"
 Status               : UnRead
 
 She said "hi" then left.

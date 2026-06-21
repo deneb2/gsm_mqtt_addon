@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working with the user on this repo
+
+For any non-trivial change (new feature, refactor, bugfix touching multiple files, design change):
+
+1. **Propose** the change in chat — what + why + risks/trade-offs.
+2. **Wait** for the user to accept the approach before writing code.
+3. **Implement** locally — do not commit yet.
+4. **Show** the diff (or a tight summary) and ask for confirmation.
+5. **Commit** only when the user says to.
+6. **Push** only when the user explicitly says to push.
+
+Trivial edits (a typo, a comment fix, a version bump in isolation, work the user just spelled out end-to-end in their last message) can compress steps 3–5 into one motion, but the push is always a separate explicit instruction. When a PR is merged, the head branch on the remote is dead — never push follow-up commits to it. Start a fresh branch off the new `main` and open a new PR.
+
 ## What this repo is
 
 A Home Assistant add-on (not a standalone app). Two shell scripts — `gsm_mqtt/run.sh` (driver) and `gsm_mqtt/lib.sh` (logic) — packaged in a hassio-addons base image. Home Assistant runs the container. There is no in-container build/lint pipeline, but a bats test suite under `tests/` runs on the host against `lib.sh` with `gammu` and `mosquitto_pub` stubbed. To ship a change, bump `version` in `gsm_mqtt/config.yaml` and commit; users pull via the add-on store using `repository.yaml`.
