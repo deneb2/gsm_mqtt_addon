@@ -187,22 +187,30 @@ parse_sms_entry() {
         body="${body%$'\n'}"
     done
 
-    local datetime
+    local datetime="" day="" mon_name="" year="" hms="" tz=""
+    # Day-first shape: "Tue 21 Oct 2025 15:02:00 +0200"
     if [[ "$datetime_raw" =~ ([0-9]+)[[:space:]]+([A-Za-z]+)[[:space:]]+([0-9]{4})[[:space:]]+([0-9]{2}:[0-9]{2}:[0-9]{2})[[:space:]]+([+-][0-9]{4})([[:space:]]|$) ]]; then
-        local day="${BASH_REMATCH[1]}" mon_name="${BASH_REMATCH[2]}"
-        local year="${BASH_REMATCH[3]}" hms="${BASH_REMATCH[4]}" tz="${BASH_REMATCH[5]}"
-        local mon
+        day="${BASH_REMATCH[1]}"; mon_name="${BASH_REMATCH[2]}"
+        year="${BASH_REMATCH[3]}"; hms="${BASH_REMATCH[4]}"; tz="${BASH_REMATCH[5]}"
+    # C-locale ctime shape: "Tue Oct 21 09:09:43 2025 +0200"
+    elif [[ "$datetime_raw" =~ ([A-Za-z]+)[[:space:]]+([0-9]+)[[:space:]]+([0-9]{2}:[0-9]{2}:[0-9]{2})[[:space:]]+([0-9]{4})[[:space:]]+([+-][0-9]{4})([[:space:]]|$) ]]; then
+        mon_name="${BASH_REMATCH[1]}"; day="${BASH_REMATCH[2]}"
+        hms="${BASH_REMATCH[3]}"; year="${BASH_REMATCH[4]}"; tz="${BASH_REMATCH[5]}"
+    fi
+
+    if [ -n "$mon_name" ]; then
+        local mon=""
         case "$mon_name" in
             Jan) mon=01;; Feb) mon=02;; Mar) mon=03;; Apr) mon=04;;
             May) mon=05;; Jun) mon=06;; Jul) mon=07;; Aug) mon=08;;
             Sep) mon=09;; Oct) mon=10;; Nov) mon=11;; Dec) mon=12;;
-            *) return 1;;
         esac
-        printf -v day "%02d" "$day"
-        datetime="${year}-${mon}-${day}T${hms}${tz}"
-    else
-        datetime="${datetime_raw// /_}"
+        if [ -n "$mon" ]; then
+            printf -v day "%02d" "$day"
+            datetime="${year}-${mon}-${day}T${hms}${tz}"
+        fi
     fi
+    [ -z "$datetime" ] && datetime="${datetime_raw// /_}"
 
     local body_b64
     body_b64=$(printf '%s' "$body" | base64 | tr -d '\n')

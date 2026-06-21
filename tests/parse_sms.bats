@@ -171,6 +171,33 @@ EOF
     [ "$(echo "$output" | wc -l)" -eq 2 ]
 }
 
+@test "parse_sms_entry parses C-locale ctime date format (Tue Oct 21 09:09:43 2025 +0200)" {
+    # Real-world: under LC_ALL=C, some gammu builds emit the ANSI asctime
+    # shape "Tue Oct 21 09:09:43 2025 +0200" (month-day-time-year-tz)
+    # instead of the day-first "Tue 21 Oct 2025 15:02:00 +0200" the parser
+    # was originally built around. Must produce the same ISO output.
+    block=$(cat <<'EOF'
+Location 0, folder "Inbox", SIM memory, Inbox folder
+SMS message
+SMSC number          : "+393205951500"
+Sent                 : Tue Oct 21 09:09:43 2025 +0200
+Coding               : Default GSM alphabet (no compression)
+Remote number        : "WINDTRE"
+Status               : Read
+
+080820 is your verification code.
+
+EOF
+)
+    encoded=$(printf '%s' "$block" | base64 | tr -d '\n')
+    run parse_sms_entry "$encoded"
+    [ "$status" -eq 0 ]
+    IFS='|' read -r location sender datetime _ <<<"$output"
+    [ "$location" = "0" ]
+    [ "$sender" = "WINDTRE" ]
+    [ "$datetime" = "2025-10-21T09:09:43+0200" ]
+}
+
 @test "parse_sms_entry rejects malformed timezone, falls back to underscore form" {
     # The ISO-conversion regex used `[+-][0-9]+` for TZ, accepting nonsense
     # like `+020000`. Tighten to exactly 4 digits so a malformed TZ falls
