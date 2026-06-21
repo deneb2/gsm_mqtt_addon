@@ -1,5 +1,5 @@
 name: "GSM MQTT Bridge"
-version: "1.4.1"
+version: "1.4.2"
 slug: "gsm_mqtt"
 description: "Bridges a GSM modem to MQTT: missed-call notifications and SMS sending via Home Assistant."
 init: false
