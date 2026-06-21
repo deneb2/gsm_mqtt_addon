@@ -15,6 +15,8 @@ For any non-trivial change (new feature, refactor, bugfix touching multiple file
 
 Trivial edits (a typo, a comment fix, a version bump in isolation, work the user just spelled out end-to-end in their last message) can compress steps 3–5 into one motion, but the push is always a separate explicit instruction. When a PR is merged, the head branch on the remote is dead — never push follow-up commits to it. Start a fresh branch off the new `main` and open a new PR.
 
+**Red-then-green is the default for any change with behavior to test.** Write the failing test first, commit it (red), then the code that makes it pass, commit that separately (green). This includes bug fixes (the test must fail on the broken code), new behavior (the test must fail before the code exists), and tightening invariants (the test asserts the new invariant). The reviewer sees the bug demonstrated before the fix, and a future refactor can't silently regress what the red commit pinned. Skip this only for: doc-only edits, version bumps in isolation, pure renames/moves with no behavior change, or work the user explicitly told you to do in one motion. When in doubt, write the test first.
+
 ## What this repo is
 
 A Home Assistant add-on (not a standalone app). Two shell scripts — `gsm_mqtt/run.sh` (driver) and `gsm_mqtt/lib.sh` (logic) — packaged in a hassio-addons base image. Home Assistant runs the container. There is no in-container build/lint pipeline, but a bats test suite under `tests/` runs on the host against `lib.sh` with `gammu` and `mosquitto_pub` stubbed. To ship a change, bump `version` in `gsm_mqtt/config.yaml` and commit; users pull via the add-on store using `repository.yaml`.
@@ -52,7 +54,7 @@ The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps t
 
 ## Tests
 
-`bats tests/` runs the full suite on the host. `tests/test_helper.bash` sources `lib.sh` directly, shims `bashio::log.*`, and installs PATH-injected stubs for `gammu` and `mosquitto_pub` that record every invocation. When adding a new `check_*` function in `lib.sh`, write a matching `tests/<name>.bats` using the same stub helpers; aim for red-then-green commits so the test demonstrates the bug before the fix lands.
+`bats tests/` runs the full suite on the host. `tests/test_helper.bash` sources `lib.sh` directly, shims `bashio::log.*`, and installs PATH-injected stubs for `gammu` and `mosquitto_pub` that record every invocation. When adding a new `check_*` function in `lib.sh`, write a matching `tests/<name>.bats` using the same stub helpers. (Red-then-green discipline is documented in the workflow section above.)
 
 ## Working with the modem (inside the container)
 
