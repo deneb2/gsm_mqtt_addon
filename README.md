@@ -368,8 +368,8 @@ The `timestamp` field is ISO 8601 with timezone offset (e.g. `2025-10-21T15:02:0
 This add-on uses Gammu exclusively for all serial port access. If you experience issues:
 1. Don't run multiple add-ons that access the same serial port simultaneously
 2. Check add-on logs for Gammu errors or serial port access issues
-3. Verify your modem supports `getcalllog` (most GSM modems do)
-4. Check call log manually: `gammu -c /tmp/gammurc getcalllog`
+3. Verify the SIM exposes a Missed-Calls phonebook: `gammu -c /tmp/gammurc getmemory MC 1 5` from the addon shell
+4. If that returns "Function not supported", missed-call detection cannot work on this modem
 
 ### Modem Doesn't Support Call Logs
 
@@ -409,8 +409,8 @@ The suite covers missed-call dedup, SMS sending, SMS-receive plumbing (with fake
 - **Polling Pattern**: Checks for SMS to send (~priority) then polls modem every ~10 seconds
 - **Queue System**: File-based queue at `/tmp/sms_queue` for reliable SMS handling
 - **No Conflicts**: Only Gammu accesses serial port - eliminates data consumption conflicts
-- **Call Detection**: Uses `gammu getcalllog` to check for missed calls; the modem's log is intentionally not cleared (would race with incoming calls)
-- **Deduplication**: Tracks processed calls in `/tmp/processed_calls` keyed by `number_datetime` so re-reads of the same entry are suppressed and distinct calls within an hour are both reported. The modem's own FIFO rotation keeps its call log bounded.
+- **Call Detection**: Reads the SIM's MC (Missed Calls) phonebook via `gammu getmemory MC 1 N` each poll (N defaults to 100, the SIM7600 MC capacity). Compares the full positional snapshot to the previous one; publishes entries that shifted in at the top. First poll after restart records a silent baseline so the existing MC backlog doesn't flood Home Assistant. No timestamp is published — gammu's MC entries don't carry one.
+- **Deduplication**: `/tmp/processed_calls` stores the last seen MC snapshot. The SIM's MC memory is *not* cleared by the addon — GSM 07.07 says `+CPBW` does not apply to MC storage, and real-world SIMs return "Security error" on delete attempts. FIFO rotation handles overflow.
 - **SMS Format**: JSON payload with `number` and `message` fields
 - **Status Feedback**: Publishes success/failure status to MQTT after each SMS attempt
 - **SMS Receiving**: Polls `gammu getallsms` each cycle; published SMS are deleted from SIM memory. Dedup state lives in `/tmp/processed_sms` keyed by `location_datetime`.
