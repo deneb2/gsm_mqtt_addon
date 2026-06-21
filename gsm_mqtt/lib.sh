@@ -98,8 +98,10 @@ parse_mc_snapshot() {
     for ((i = 0; i < MC_SNAPSHOT_SIZE; i++)); do
         out+="${slots[$i]:-}|"
     done
-    # Empty MC: every slot blank -> stripped result is empty, signal "no entries".
-    [[ "${out//|/}" = "" ]] && return 0
+    # Always emit the snapshot, even when every slot is empty, so
+    # check_missed_calls can persist an "empty MC" baseline. Without
+    # this, the first real call after an empty-MC poll has no baseline
+    # to shift against and gets silently swallowed.
     printf '%s\n' "$out"
 }
 
@@ -160,10 +162,11 @@ check_missed_calls() {
     local -a new_arr old_arr
     IFS='|' read -ra new_arr <<< "$new_snapshot"
     IFS='|' read -ra old_arr <<< "$last_snapshot"
-    # `read -ra` keeps an empty trailing field after a trailing delimiter,
-    # which would skew length comparisons. Trim it.
-    [ "${new_arr[-1]}" = "" ] && unset 'new_arr[-1]'
-    [ "${old_arr[-1]}" = "" ] && unset 'old_arr[-1]'
+    # `IFS='|' read -ra` strips ONE trailing empty field after a
+    # trailing delimiter (bash 5.2 behavior), so a snapshot of exactly
+    # MC_SNAPSHOT_SIZE pipes splits to MC_SNAPSHOT_SIZE fields directly.
+    # No manual trim — the earlier `unset 'arr[-1]'` here destroyed a
+    # legitimate empty slot whenever the last MC entry was empty.
 
     local k
     k=$(mc_shift_amount new_arr old_arr)
