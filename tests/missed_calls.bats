@@ -137,3 +137,51 @@ EOF
     run wc -l < "$PUBLISH_LOG"
     [ "$output" = "0" ]
 }
+
+# ---------------------------------------------------------------------------
+# Regression tests for bugs flagged by the high-effort code review.
+# These are expected to FAIL on the current code; they describe the
+# behavior the fixes will need to produce.
+# ---------------------------------------------------------------------------
+
+@test "REGRESSION: partial MC + scrambled list publishes flood instead of silent re-baseline" {
+    # Trim at line 165-166 strips a legitimate empty slot because
+    # `read -ra "a|b|" -> 2 fields` (bash 5.2 strips the trailing-empty
+    # automatically). For a partial MC the arrays become shorter than
+    # MC_SNAPSHOT_SIZE; mc_shift_amount returns n+1 which is <= the
+    # MC_SNAPSHOT_SIZE threshold, so the resync guard at line 171 fails
+    # to fire and the code falls into the publish loop with an
+    # out-of-bounds k, emitting spurious 'Missed call from:' events.
+    stub_gammu_mc "$(mc_block +391000000001 +391000000002 +391000000003)"
+    stub_mosquitto_pub
+    check_missed_calls          # partial-MC baseline (3 entries + 2 empty)
+
+    # Wholly unrelated content — should trigger silent re-baseline.
+    stub_gammu_mc "$(mc_block +395555555555 +396666666666 +397777777777)"
+    check_missed_calls
+
+    run wc -l < "$PUBLISH_LOG"
+    [ "$output" = "0" ]
+}
+
+@test "REGRESSION: first call after empty MC is silently swallowed as baseline" {
+    # check_missed_calls returns early on empty MC without persisting any
+    # baseline (the `[ -n "$new_snapshot" ] || return 0` at line 145).
+    # On the next poll, when a real call arrives, last_snapshot is still
+    # empty, the code takes the `[ -z "$last_snapshot" ]` baseline branch,
+    # and the first real call is silently recorded as the baseline
+    # instead of being published.
+    stub_gammu_mc ''           # MC empty on first poll
+    stub_mosquitto_pub
+    check_missed_calls          # no entries, no MQTT, no baseline persisted
+
+    # Now a real call arrives.
+    stub_gammu_mc "$(mc_block +391000000001)"
+    check_missed_calls
+
+    # The call MUST surface; baseline-silent-on-first-poll is meant only
+    # for non-empty initial states (the existing backlog), not for the
+    # legitimate first-ever call.
+    [ "$(publish_count 'Missed call from: +391000000001')" -eq 1 ]
+}
+
