@@ -54,20 +54,20 @@ EOF
     export -f "$router"
 }
 
-# Convenience: stub gammu to print a static body for getcalllog and succeed
-# silently for deleteallcalls. Anything else exits non-zero.
-stub_gammu_calllog() {
+# Convenience: stub gammu to print a static body for `getallmemory MC`
+# (the missed-calls memory) and exit non-zero for anything else.
+stub_gammu_mc() {
     local body="$1"
-    _calllog_body="$body"
-    export _calllog_body
-    _route_calllog() {
-        case "$1" in
-            getcalllog) printf '%s\n' "$_calllog_body"; return 0;;
-            deleteallcalls) return 0;;
-            *) return 1;;
-        esac
+    _mc_body="$body"
+    export _mc_body
+    _route_mc() {
+        if [ "$1" = "getallmemory" ] && [ "$2" = "MC" ]; then
+            printf '%s\n' "$_mc_body"
+            return 0
+        fi
+        return 1
     }
-    stub_gammu_dispatch _route_calllog
+    stub_gammu_dispatch _route_mc
 }
 
 stub_mosquitto_pub() {

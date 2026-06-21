@@ -16,7 +16,7 @@ The HA-facing name is "GSM MQTT Bridge"; the slug is `gsm_mqtt`. The repo was or
 
 **Polling loop with strict priority** (in `run.sh`):
 1. Drain one SMS from `/tmp/sms_queue` if present (then `sleep "$POST_SMS_COOLDOWN"`, continue — keeps outbound SMS responsive while giving the modem time to recover).
-2. Otherwise `gammu getcalllog` and publish any new missed calls.
+2. Otherwise `gammu getallmemory MC` (the SIM's Missed Calls phonebook), parse via `parse_mc_top_entry`, and publish if the highest-location entry's `(location, number)` tuple differs from the last poll. The first poll after addon restart silently records the current top as a baseline so the existing backlog doesn't flood Home Assistant.
 3. `check_received_sms` runs `gammu getallsms`, parses each record via `parse_sms_dump` (splits into base64-encoded blocks, one per SMS) and `parse_sms_entry` (extracts `location|sender|datetime|body_b64` with the datetime ISO-normalized), publishes to `<base>/sms_received`, dedups in `/tmp/processed_sms`, and deletes the SMS from SIM memory.
 
 The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps the loop alive across USB reconnects.
@@ -25,7 +25,7 @@ The loop sleeps 10s between idle cycles. The serial-port wait at the top keeps t
 
 **State files survive only inside the container's tmpfs:**
 - `/tmp/sms_queue` — line-per-SMS JSON, FIFO, drained by `sed -i '1d'`.
-- `/tmp/processed_calls` — dedup key is `${number}_${call_datetime}` parsed from gammu output. Trimmed to last 200 entries. We do NOT clear the modem's call log — that would race with incoming calls and silently drop them.
+- `/tmp/processed_calls` — last line holds the most recent `(location|number)` tuple from MC memory. Trimmed to last 200 entries. We do NOT delete from MC memory: real-world SIMs reject `deletememory MC <loc>` with "Security error" even with no PIN required, so the dedup mechanism is tuple-comparison between polls, not delete-after-publish.
 - `/tmp/processed_sms` — same shape, keyed by `${location}_${datetime}` for inbound SMS.
 - `/tmp/gammurc` — regenerated on every start from `serial_port` config.
 
@@ -54,10 +54,10 @@ Useful one-liners when debugging via the add-on shell:
 ## Things to know before editing `lib.sh` / `run.sh`
 
 - The missed-call parser depends on Gammu's English output. `LC_ALL=C` is set on every `gammu` invocation to lock the locale; preserve that if you add new gammu calls.
-- `parse_missed_call_line`'s datetime regex assumes `DD.MM.YYYY HH:MM:SS`. If your modem/gammu version emits ISO dates the parser will silently skip every line.
+- Missed-call detection requires `gammu getallmemory MC` to work on the modem (the SIM's Missed Calls phonebook). gammu 1.42 has no `getcalllog` command at all, so the old polling approach is gone. If the modem returns "Function not supported" or "Security error" for `getallmemory MC`, detection is broken and the addon will silently never publish missed calls. Verify with `gammu -c /tmp/gammurc getallmemory MC` from the addon shell. The published payload contains only the caller's number — gammu's MC entries have no timestamp.
 - `bashio::config` returns empty strings (not unset) when a key is missing, so the `: "${VAR:=default}"` fallbacks fire only when the value is literally empty. Don't switch to `${VAR:-default}` — assignment to `VAR` is needed because later code reads it.
 - The missed-call loop uses process substitution (`done < <(echo "$call_log" | grep -i "Missed")`) rather than `| while`, so the loop body runs in the function's own shell and `local` variables work normally.
-- Do not add `gammu deleteallcalls` to `check_missed_calls` — see the long comment in that function for why.
+- Do not add `gammu deletememory MC` or `gammu deleteallmemory MC` to `check_missed_calls` — see the long comment in that function. Tested on a real SIM: gammu returns "Security error. Maybe no PIN?" even though no PIN is required. Tuple-comparison dedup works around this.
 - `check_received_sms` hardcodes `deletesms 1 "$location"` — memory `1` is SIM (`SM`). If the modem stores inbound SMS in modem memory (`ME`, often `2`) the delete silently fails (the call is suffixed `|| true`), dedup catches the re-publish, but the modem's inbox fills until cleared manually. Run `gammu -c /tmp/gammurc getsmsfolders` to see which memory your modem uses; if it's not SM=1, the constant needs to change or move to config.
 - `parse_sms_entry`'s ISO datetime conversion is locked to `LC_ALL=C` gammu output (`Tue 21 Oct 2025 15:02:00 +0200`). If the modem or gammu version emits a different date shape (e.g. ISO, locale-specific abbreviations, 6-digit TZ) the regex falls through to the underscore-escaped raw form — dedup still works but the published `timestamp` won't be ISO 8601.
 - `lib.sh` uses `base64 | tr -d '\n'` rather than `base64 -w 0` because the addon's Alpine base ships BusyBox, which doesn't accept `-w`. Preserve the `tr -d '\n'` chain on any new encoding calls.

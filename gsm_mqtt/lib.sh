@@ -32,17 +32,30 @@ dedup_mark() {
         && mv "$state_file.tmp" "$state_file"
 }
 
-# Parse one "Missed" line from `gammu getcalllog`.
-# Echoes "number|datetime" on success, returns 1 on no match.
-# Example input: Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00
-parse_missed_call_line() {
-    local line="$1"
-    local number datetime
-    [[ "$line" =~ [Nn]umber[[:space:]]*[\"\']?([+0-9]+) ]] || return 1
-    number="${BASH_REMATCH[1]}"
-    [[ "$line" =~ [Dd]ate/time:[[:space:]]*([0-9.]+[[:space:]]+[0-9:]+) ]] || return 1
-    datetime="${BASH_REMATCH[1]// /_}"
-    echo "${number}|${datetime}"
+# Find the highest-location entry in a `gammu getallmemory MC` dump.
+# Echoes "location|number" on success, returns 1 on empty/malformed input.
+# gammu's MC memory entries look like:
+#     Memory MC, Location 3
+#     General number       : "+391234567890"
+#     Name                 : ""
+parse_mc_top_entry() {
+    local dump="$1"
+    [ -n "$dump" ] || return 1
+    local top_loc=0 top_num="" cur_loc="" line
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^Memory[[:space:]]+MC,[[:space:]]+Location[[:space:]]+([0-9]+) ]]; then
+            cur_loc="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^General[[:space:]]+number[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+            local num="${BASH_REMATCH[1]}"
+            if [ -n "$cur_loc" ] && [ -n "$num" ] && [ "$cur_loc" -gt "$top_loc" ]; then
+                top_loc="$cur_loc"
+                top_num="$num"
+            fi
+            cur_loc=""
+        fi
+    done <<< "$dump"
+    [ -n "$top_num" ] || return 1
+    echo "${top_loc}|${top_num}"
 }
 
 send_queued_sms() {
@@ -85,34 +98,43 @@ send_queued_sms() {
 }
 
 check_missed_calls() {
-    local call_log exit_code
-    call_log=$(LC_ALL=C gammu -c "$GAMMU_CONFIG" getcalllog 2>&1)
+    local mc_dump exit_code
+    mc_dump=$(LC_ALL=C gammu -c "$GAMMU_CONFIG" getallmemory MC 2>&1)
     exit_code=$?
     if [ $exit_code -ne 0 ]; then
-        bashio::log.debug "Could not read call log (modem may not support it): $call_log"
+        bashio::log.debug "Could not read MC memory (modem may not support it): $mc_dump"
         return 1
     fi
 
-    local line parsed number datetime key
-    while IFS= read -r line; do
-        parsed=$(parse_missed_call_line "$line") || continue
-        number="${parsed%%|*}"
-        datetime="${parsed##*|}"
-        key="${number}_${datetime}"
-        if dedup_seen "$PROCESSED_CALLS" "$key"; then
-            continue
-        fi
-        bashio::log.info "Missed call from: $number"
-        emit_event "" "Missed call from: $number"
-        dedup_mark "$PROCESSED_CALLS" "$key"
-    done < <(echo "$call_log" | grep -i "Missed")
+    local parsed
+    parsed=$(parse_mc_top_entry "$mc_dump") || return 0   # empty MC, nothing to do
 
-    # We intentionally do NOT clear the modem's call log here. A `deleteallcalls`
-    # right after `getcalllog` opens a race window: any missed call arriving
-    # between the read and the delete is nuked from the modem without ever
-    # being processed, so the user gets no notification. Datetime-based dedup
-    # already guarantees we never re-publish a call we've seen; the modem's own
-    # FIFO rotation keeps its log bounded. Don't add a delete here.
+    local number="${parsed##*|}"
+    local last_key=""
+    [ -s "$PROCESSED_CALLS" ] && last_key=$(tail -n 1 "$PROCESSED_CALLS")
+
+    if [ "$parsed" = "$last_key" ]; then
+        return 0
+    fi
+
+    if [ -z "$last_key" ]; then
+        # First poll after restart: record baseline silently so the
+        # existing MC backlog doesn't get re-published as fresh calls.
+        bashio::log.info "Missed-call baseline recorded (no notification on initial poll)"
+        dedup_mark "$PROCESSED_CALLS" "$parsed"
+        return 0
+    fi
+
+    bashio::log.info "Missed call from: $number"
+    emit_event "" "Missed call from: $number"
+    dedup_mark "$PROCESSED_CALLS" "$parsed"
+
+    # We intentionally never delete from MC memory. Real-world SIMs reject
+    # `deletememory MC <loc>` with "Security error" even when no PIN is
+    # required, so the addon can't reliably clear the log. Tracking the
+    # (top_location, top_number) tuple between polls is the dedup mechanism
+    # instead. The SIM's own FIFO rotation eventually drops oldest entries
+    # once its capacity is reached.
     return 0
 }
 

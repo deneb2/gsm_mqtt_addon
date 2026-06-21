@@ -1,76 +1,100 @@
 #!/usr/bin/env bats
+# Missed-call detection is based on polling the SIM's MC (Missed Calls)
+# phonebook memory via `gammu getallmemory MC`. gammu's getcalllog command
+# does not exist in 1.42.0 and per-entry `deletememory MC <loc>` is
+# rejected as a security error on real-world SIMs, so we cannot use the
+# delete-after-publish dedup pattern. Instead, the detector tracks the
+# (top_location, top_number) tuple between polls and publishes whenever
+# either changes. On the first poll after addon restart, it silently
+# records the current top as a baseline so the existing MC backlog
+# doesn't flood Home Assistant.
+
 load test_helper
 
-@test "parse_missed_call_line extracts number and datetime" {
-    run parse_missed_call_line 'Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00'
-    [ "$status" -eq 0 ]
-    [ "$output" = "+391234567890|21.10.2025_15:02:00" ]
+sample_mc_three() {
+    cat <<'EOF'
+Memory MC, Location 1
+General number       : "+391234567890"
+Name                 : ""
+
+Memory MC, Location 2
+General number       : "+391234567890"
+Name                 : ""
+
+Memory MC, Location 3
+General number       : "+391111111111"
+Name                 : ""
+EOF
 }
 
-@test "parse_missed_call_line rejects line without datetime" {
-    run parse_missed_call_line 'Call 1, Missed, Number "+391234567890"'
-    [ "$status" -eq 1 ]
-}
-
-@test "missed call from new number publishes one MQTT event" {
-    stub_gammu_calllog 'Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00'
-    stub_mosquitto_pub
-    check_missed_calls
-    [ "$(publish_count 'Missed call from: +391234567890')" -eq 1 ]
-}
-
-@test "same call seen on two polls publishes only once" {
-    stub_gammu_calllog 'Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00'
-    stub_mosquitto_pub
-    check_missed_calls
-    check_missed_calls
-    [ "$(publish_count 'Missed call from: +391234567890')" -eq 1 ]
-}
-
-@test "two distinct calls from same number both publish" {
-    stub_gammu_calllog 'Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00
-Call 2, Missed, Number "+391234567890", Date/time: 21.10.2025 15:55:00'
-    stub_mosquitto_pub
-    check_missed_calls
-    [ "$(publish_count 'Missed call from: +391234567890')" -eq 2 ]
-}
-
-@test "non-missed entries are ignored" {
-    stub_gammu_calllog 'Call 1, Incoming, Number "+391111111111", Date/time: 21.10.2025 15:00:00
-Call 2, Outgoing, Number "+392222222222", Date/time: 21.10.2025 15:01:00'
+@test "first poll silently records baseline, no publish" {
+    stub_gammu_mc "$(sample_mc_three)"
     stub_mosquitto_pub
     check_missed_calls
     run wc -l < "$PUBLISH_LOG"
     [ "$output" = "0" ]
 }
 
-@test "deleteallcalls is NOT invoked (would race with incoming calls)" {
-    # Calling deleteallcalls right after getcalllog opens a window where a
-    # fresh call can land in the log and be deleted before we ever see it.
-    # We rely on datetime-keyed dedup + the modem's natural FIFO rotation
-    # to keep things correct and bounded. See lib.sh check_missed_calls.
-    stub_gammu_calllog 'Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00'
+@test "same MC content on two polls publishes only once (zero, after baseline)" {
+    stub_gammu_mc "$(sample_mc_three)"
     stub_mosquitto_pub
-    check_missed_calls
-    [ "$(gammu_call_count deleteallcalls)" -eq 0 ]
+    check_missed_calls          # baseline
+    check_missed_calls          # no change
+    run wc -l < "$PUBLISH_LOG"
+    [ "$output" = "0" ]
 }
 
-@test "dedup matches whole line, not substring" {
-    # Regression: dedup_seen used `grep -qF` (substring), so any stored line
-    # that contained the lookup key anywhere would falsely suppress a new
-    # event. Seed the state file with a line that embeds the new key as a
-    # substring and assert the event still publishes.
-    echo 'noise_+391234567890_21.10.2025_15:02:00_suffix' > "$PROCESSED_CALLS"
-    stub_gammu_calllog 'Call 1, Missed, Number "+391234567890", Date/time: 21.10.2025 15:02:00'
+@test "new entry at higher location publishes one notification" {
+    stub_gammu_mc "$(sample_mc_three)"
     stub_mosquitto_pub
+    check_missed_calls          # baseline at location 3
+
+    # New call appears at location 4
+    stub_gammu_mc "$(sample_mc_three)
+Memory MC, Location 4
+General number       : \"+399999999999\"
+Name                 : \"\""
     check_missed_calls
-    [ "$(publish_count 'Missed call from: +391234567890')" -eq 1 ]
+
+    [ "$(publish_count 'Missed call from: +399999999999')" -eq 1 ]
 }
 
-@test "gammu failure is tolerated (no crash, no publish)" {
+@test "top entry content changing publishes once (shift-mode SIM)" {
+    # Some SIMs keep locations stable but shift content down on new call.
+    # Simulate: baseline has +391111 at top location 3, then top location 3
+    # gets new content +395555.
+    stub_gammu_mc "$(sample_mc_three)"
+    stub_mosquitto_pub
+    check_missed_calls          # baseline
+
+    stub_gammu_mc 'Memory MC, Location 1
+General number       : "+391234567890"
+Name                 : ""
+
+Memory MC, Location 2
+General number       : "+391234567890"
+Name                 : ""
+
+Memory MC, Location 3
+General number       : "+395555555555"
+Name                 : ""'
+    check_missed_calls
+
+    [ "$(publish_count 'Missed call from: +395555555555')" -eq 1 ]
+}
+
+@test "empty MC memory: no publish, no baseline crash" {
+    stub_gammu_mc ''
+    stub_mosquitto_pub
+    check_missed_calls
+    run wc -l < "$PUBLISH_LOG"
+    [ "$output" = "0" ]
+}
+
+@test "gammu failure is tolerated (returns 1, no publish)" {
     cat > "$STUB_DIR/gammu" <<'EOF'
 #!/usr/bin/env bash
-echo "Error: cannot open device" >&2
+echo "Error opening device" >&2
 exit 2
 EOF
     chmod +x "$STUB_DIR/gammu"
@@ -79,4 +103,16 @@ EOF
     [ "$status" -eq 1 ]
     run wc -l < "$PUBLISH_LOG"
     [ "$output" = "0" ]
+}
+
+@test "deleteallcalls / deletememory are NOT invoked" {
+    # Whatever happens, we never try to delete from the modem. SIMs reject
+    # MC deletion as a security error and gammu 1.42 has no getcalllog,
+    # so there's nothing to clean up.
+    stub_gammu_mc "$(sample_mc_three)"
+    stub_mosquitto_pub
+    check_missed_calls
+    [ "$(gammu_call_count deleteallcalls)" -eq 0 ]
+    [ "$(gammu_call_count deletememory)" -eq 0 ]
+    [ "$(gammu_call_count deleteallmemory)" -eq 0 ]
 }
