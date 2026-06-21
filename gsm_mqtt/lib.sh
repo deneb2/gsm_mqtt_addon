@@ -72,12 +72,12 @@ send_queued_sms() {
     return 0
 }
 
-# Parse `gammu getmemory MC 1 100` output into a `|`-separated single
-# line of up to MC_SNAPSHOT_SIZE numbers, ordered Location 1 first
-# (Location 1 is the newest call on this hardware — confirmed
-# empirically against a SIM7600E-H).
-# Empty slots are kept as empty fields so positional comparison works.
-# Echoes the snapshot line; empty echo if the dump contained no entries.
+# Parse `gammu getmemory MC 1 N` output into a `|`-separated single
+# line of MC_SNAPSHOT_SIZE numbers, ordered Location 1 first (Location 1
+# is the newest call on this hardware — confirmed empirically against a
+# SIM7600E-H). Empty slots become empty fields so positional comparison
+# works. Always echoes a snapshot (all-empty when MC is empty) so the
+# caller can persist a baseline even for an empty MC.
 parse_mc_snapshot() {
     local dump="$1"
     local -a slots=()
@@ -106,16 +106,17 @@ parse_mc_snapshot() {
 }
 
 # Given the new and old snapshots, find the shift amount k such that
-# new[k..N-1] == old[0..N-1-k]. Returns 0..N. Returns N+1 if no shift
-# matches (lists are unrelated — modem reset, burst >N, etc.).
+# new[k..N-1] == old[0..N-1-k]. Returns k in 1..N-1 on a partial-overlap
+# shift, or N+1 if no shift matches (k=N would mean every entry is new
+# with no overlap to old — treated as the modem-reset / huge-burst case
+# the caller should resync silently rather than spam, so the loop
+# deliberately stops at k = N - 1). The "snapshots identical" case is
+# checked by the caller before calling here.
 mc_shift_amount() {
     local -n _shift_new=$1
     local -n _shift_old=$2
     local n=${#_shift_new[@]}
     local k i match
-    # k = n would mean "every entry is new, no overlap with old" — the
-    # modem-reset / huge-burst case we want to treat as a re-baseline,
-    # so the loop deliberately stops at k = n - 1.
     for ((k = 1; k < n; k++)); do
         match=1
         for ((i = 0; i < n - k; i++)); do
@@ -144,7 +145,9 @@ check_missed_calls() {
 
     local new_snapshot
     new_snapshot=$(parse_mc_snapshot "$mc_dump")
-    [ -n "$new_snapshot" ] || return 0   # MC empty, nothing to do
+    # parse_mc_snapshot always emits a snapshot (just pipes when MC is
+    # empty); this guard is purely defensive.
+    [ -n "$new_snapshot" ] || return 0
 
     local last_snapshot=""
     [ -s "$PROCESSED_CALLS" ] && last_snapshot=$(tail -n 1 "$PROCESSED_CALLS")
@@ -195,9 +198,13 @@ check_missed_calls() {
     return 0
 }
 
-# Placeholder for inbound SMS handling. Wired into the main loop and into
-# tests/sms_receive.bats; the modem-specific parsers below are TODO stubs.
-# Drop in real implementations of parse_sms_dump and parse_sms_entry to enable.
+# Split a `gammu getallsms` dump into one base64-encoded record per
+# line. Each record is a full multi-line SMS block; base64 keeps the
+# inter-function pipe newline-safe so check_received_sms can iterate
+# with `while IFS= read -r entry`. Block boundaries are the
+# `Location N, folder "...", <Word> memory` header (strict shape that
+# body text can't accidentally mimic) and the trailing
+# `N SMS parts in M sequences` summary line.
 parse_sms_dump() {
     local dump="$1"
     [ -n "$dump" ] || return 0
